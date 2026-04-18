@@ -1,4 +1,6 @@
 import { generatePortfolioNewsDigest } from "@/lib/ai"
+import { fetchGoogleNewsArticles } from "@/lib/googleNews"
+import type { PortfolioNewsItem } from "@/lib/types"
 
 export const runtime = "nodejs"
 
@@ -36,14 +38,28 @@ export async function GET(req: Request) {
   }
 
   try {
-    const items = await generatePortfolioNewsDigest(tickers)
+    const articleGroups = await Promise.all(tickers.map((t) => fetchGoogleNewsArticles(t, 6)))
+    const articles = articleGroups.flat()
+    const rawItems = await generatePortfolioNewsDigest(tickers, articles)
+    const items: PortfolioNewsItem[] = rawItems.map((it) => {
+      const link = it.link
+      const idSafe = encodeURIComponent(String(it.id ?? `${it.ticker}-${it.publishedAt}`))
+      const imageUrl = `/api/news/image?ticker=${encodeURIComponent(it.ticker)}&id=${idSafe}`
+
+      return {
+        ...it,
+        link,
+        imageUrl,
+        sourceLinks: it.sourceLinks?.length ? it.sourceLinks : [{ title: it.publisher, url: link }],
+      }
+    })
     const body = {
       items,
       tickers,
       fetchedAt: now,
       cached: false,
       cacheTtlSec: Math.round(CACHE_TTL_MS / 1000),
-      source: "gemini",
+      source: "llm",
     }
     cache.set(key, { at: now, body })
     return Response.json(body)

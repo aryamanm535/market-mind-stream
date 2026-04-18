@@ -1,4 +1,5 @@
 import { generateRegionExplanation } from "@/lib/ai"
+import { fetchGoogleNewsArticles } from "@/lib/googleNews"
 import type { ChartSelectionRange, ChartTimeframe } from "@/lib/types"
 
 const ALLOW_TF = new Set<ChartTimeframe>(["1D", "1W", "1M", "3M", "1Y", "5Y"])
@@ -40,14 +41,24 @@ export async function POST(req: Request) {
       ? (tfRaw as ChartTimeframe)
       : "1D"
 
-  const rangeSummary = `horizon ${timeframe}; index ${r.startIndex}→${r.endIndex}; labels ${r.startLabel}–${r.endLabel}; prices ${r.startPrice} → ${r.endPrice}`
+  const startFull = String(r.startLabelFull ?? r.startLabel ?? "").trim()
+  const endFull = String(r.endLabelFull ?? r.endLabel ?? "").trim()
+  const rangeSummary = `horizon ${timeframe}; index ${r.startIndex}→${
+    r.endIndex
+  }; window ${startFull || r.startLabel}–${endFull || r.endLabel}; axis ${r.startLabel}–${
+    r.endLabel
+  }; prices ${r.startPrice} → ${r.endPrice}`
+
+  const articles = await fetchGoogleNewsArticles(stock, 5)
 
   const result = await generateRegionExplanation(stock, rangeSummary, {
     pctChange: r.pctChange,
     startLabel: r.startLabel,
     endLabel: r.endLabel,
+    startLabelFull: startFull || String(r.startLabel),
+    endLabelFull: endFull || String(r.endLabel),
     timeframe,
-  })
+  }, articles)
 
   return Response.json(result)
 }

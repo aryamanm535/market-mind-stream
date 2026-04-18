@@ -40,6 +40,7 @@ export default function Home() {
   const [symbolDraft, setSymbolDraft] = useState("")
   const [chartBusy, setChartBusy] = useState(false)
   const [chartTimeframe, setChartTimeframe] = useState<ChartTimeframe>("1D")
+  const [chartMode, setChartMode] = useState<"explain" | "draw">("explain")
   const [newTicker, setNewTicker] = useState("")
   const portfolio = useLocalPortfolio()
   const learning = useLearningStore()
@@ -56,6 +57,7 @@ export default function Home() {
 
   const explainMove = useCallback(
     async (range: ChartSelectionRange) => {
+      if (chartMode !== "explain") return
       setChartBusy(true)
       const ac = new AbortController()
       const t = window.setTimeout(() => ac.abort(), EXPLAIN_CLIENT_MS)
@@ -78,7 +80,7 @@ export default function Home() {
             confidence: 0,
             action: "ERROR",
           }
-          setFeed((p) => [errCard, ...p].slice(0, 40))
+          setFeed((p) => [errCard, ...p].slice(0, 3))
           return
         }
         if (!res.ok || data.error) {
@@ -89,10 +91,10 @@ export default function Home() {
             confidence: 0,
             action: "ERROR",
           }
-          setFeed((p) => [errCard, ...p].slice(0, 40))
+          setFeed((p) => [errCard, ...p].slice(0, 3))
           return
         }
-        setFeed((p) => [data, ...p].slice(0, 40))
+        setFeed((p) => [data, ...p].slice(0, 3))
         if (data.learn) {
           learning.ingestLearnPack(data.learn)
           setLastPack(data.learn)
@@ -111,13 +113,13 @@ export default function Home() {
           confidence: 0,
           action: "ERROR",
         }
-        setFeed((p) => [errCard, ...p].slice(0, 40))
+        setFeed((p) => [errCard, ...p].slice(0, 3))
       } finally {
         clearTimeout(t)
         setChartBusy(false)
       }
     },
-    [learning, sym]
+    [chartMode, learning, sym]
   )
 
   const launchLearn = useCallback(
@@ -288,8 +290,23 @@ export default function Home() {
                   </span>
                 </div>
               </div>
-              <div className="font-mono text-[11px] text-zinc-500">
-                AI runs only when you select a range — no live ticker generation.
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setChartMode((m) => (m === "explain" ? "draw" : "explain"))}
+                  className={`rounded-md border px-3 py-2 font-mono text-[11px] transition-colors ${
+                    chartMode === "explain"
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                      : "border-sky-500/40 bg-sky-500/10 text-sky-100"
+                  }`}
+                >
+                  {chartMode === "explain" ? "Explain: drag select" : "Draw: compare lines"}
+                </button>
+                <div className="hidden font-mono text-[11px] text-zinc-500 md:block">
+                  {chartMode === "explain"
+                    ? "Drag-select to pull explanation + linked articles."
+                    : "Click two points to draw comparison lines."}
+                </div>
               </div>
             </header>
 
@@ -298,6 +315,7 @@ export default function Home() {
                 data={chartData}
                 ticker={sym}
                 timeframe={chartTimeframe}
+                mode={chartMode}
                 onSelect={explainMove}
                 busy={chartBusy}
               />

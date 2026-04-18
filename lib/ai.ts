@@ -6,6 +6,7 @@ import type {
   MarketThought,
   PortfolioNewsItem,
 } from "./types"
+import type { NewsArticle } from "./googleNews"
 
 /**
  * LLM provider
@@ -118,6 +119,23 @@ const EXPLAIN_RESPONSE_SCHEMA = {
     ticker: { type: "STRING" },
     thought: { type: "STRING" },
     reasoning: { type: "ARRAY", items: { type: "STRING" } },
+    topFactors: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: { factor: { type: "STRING" }, evidence: { type: "STRING" } },
+        required: ["factor", "evidence"],
+      },
+    },
+    whatToWatch: { type: "STRING" },
+    sources: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: { title: { type: "STRING" }, url: { type: "STRING" } },
+        required: ["title", "url"],
+      },
+    },
     confidence: { type: "INTEGER" },
     action: { type: "STRING" },
     regionLabel: { type: "STRING" },
@@ -318,10 +336,33 @@ export function coerceMarketThought(raw: unknown, fallbackTicker: string): Marke
       ? [o.reasoning]
       : []
 
+  const sources = Array.isArray(o.sources)
+    ? o.sources
+        .slice(0, 6)
+        .map((s) => ({
+          title: String((s as any)?.title ?? "").trim(),
+          url: String((s as any)?.url ?? "").trim(),
+        }))
+        .filter((x) => x.title && /^https?:\/\//.test(x.url))
+    : undefined
+
+  const topFactors = Array.isArray(o.topFactors)
+    ? o.topFactors
+        .slice(0, 2)
+        .map((f) => ({
+          factor: String((f as any)?.factor ?? "").trim(),
+          evidence: String((f as any)?.evidence ?? "").trim(),
+        }))
+        .filter((x) => x.factor && x.evidence)
+    : undefined
+
   return {
     ticker: String(o.ticker ?? fallbackTicker),
     thought: String(o.thought ?? ""),
     reasoning,
+    whatToWatch: o.whatToWatch != null ? String(o.whatToWatch) : undefined,
+    sources,
+    topFactors,
     confidence: clampConfidence(o.confidence),
     action: normalizeAction(o.action),
     regionLabel: o.regionLabel != null ? String(o.regionLabel) : undefined,
@@ -508,29 +549,65 @@ const EXPLAIN_BUDGET_MS = Math.max(
 
 const TIMEFRAME_BLURB: Record<ChartTimeframe, string> = {
   "1D": "intraday session (5-minute style bars)",
-  "1W": "about one week (daily bars)",
-  "1M": "about one month (daily bars)",
-  "3M": "about three months (weekly bars)",
-  "1Y": "one year (monthly bars)",
-  "5Y": "five years (quarterly bars)",
+  "1W": "about one week (3 intraday samples per trading day)",
+  "1M": "about one month (3 intraday samples per trading day)",
+  "3M": "about three months (one sample per trading day)",
+  "1Y": "one year (weekly samples)",
+  "5Y": "five years (monthly samples)",
 }
 
 /** Explain a selected chart window — tuned for ~2s wall time. */
 export async function generateRegionExplanation(
   ticker: string,
   rangeSummary: string,
-  stats: { pctChange: number; startLabel: string; endLabel: string; timeframe: ChartTimeframe }
+  stats: {
+    pctChange: number
+    startLabel: string
+    endLabel: string
+    startLabelFull: string
+    endLabelFull: string
+    timeframe: ChartTimeframe
+  },
+  articles: NewsArticle[] = []
 ): Promise<MarketThought> {
   const dir =
     stats.pctChange > 0.01 ? "up" : stats.pctChange < -0.01 ? "down" : "sideways"
   const horizon = TIMEFRAME_BLURB[stats.timeframe] ?? "selected horizon"
-  const prompt = `Simulated series only. Horizon: ${stats.timeframe} (${horizon}). Stock ${ticker}, window ${stats.startLabel}–${
-    stats.endLabel
-  }, move ${stats.pctChange >= 0 ? "+" : ""}${stats.pctChange.toFixed(
+  const win = `${stats.startLabelFull}–${stats.endLabelFull}`
+  const articleBlock =
+    articles.length > 0
+      ? articles
+          .slice(0, 5)
+          .map(
+            (a, i) =>
+              `${i + 1}. ${a.title} | ${a.publisher} | ${new Date(a.publishedAt).toISOString()} | ${a.url}`
+          )
+          .join("\n")
+      : "No recent article list was available."
+
+  const prompt = `Horizon: ${stats.timeframe} (${horizon}). Stock ${ticker}, window ${win} (axis: ${
+    stats.startLabel
+  }–${stats.endLabel}), move ${stats.pctChange >= 0 ? "+" : ""}${stats.pctChange.toFixed(
     2
   )}% (${dir}). Context: ${rangeSummary}
 
-In "thought" (≤70 words), explain why price likely moved ${dir}. Exactly 3 strings in "reasoning" (very short). Then include a "learn" object to power a game + flashcards:
+When you refer to the time range in "thought" and "reasoning", use the full calendar window (${win}) — not "D1" or "D2" style labels.
+
+Recent real article candidates for this ticker:
+${articleBlock}
+
+Be SPECIFIC and concrete:
+- In "thought" (≤100 words), give a crisp causal narrative with at least 2 concrete details (numbers, levels, named mechanisms, or article-specific catalysts).
+- Provide "topFactors": an array of exactly 2 objects, ranked. Each has:
+  - factor: short name (e.g. "Rates repricing", "Earnings headline", "Sector rotation", "Positioning unwind", "Break above resistance")
+  - evidence: one sentence with a concrete anchor (number/level/mechanism/article).
+- Exactly 3 strings in "reasoning". Each must include one concrete anchor: a number/level, a named mechanism, or a cross-asset/sector cue. No generic fluff.
+- Add "whatToWatch" as a single short string (next catalyst/level).
+- IMPORTANT: mention news factors alongside technicals if articles support them. Do NOT blame only moving averages unless you also connect it to an article catalyst / flows / macro move.
+- Add "sources": 2-4 links chosen ONLY from the provided article URLs above. Use the exact URLs from the list.
+- confidence: 0-100 plausibility.
+
+Then include a "learn" object to power a game + flashcards:
 - terms: 5-8 key terms with 1-line definitions + topic
 - quiz: 3 multiple-choice questions with answer + explanation
 - driverGame: pick best driver category
@@ -540,12 +617,15 @@ Use only valid JSON strings (escape quotes inside text). No markdown.
 {
   "ticker": "${ticker}",
   "thought": "...",
+  "topFactors": [{"factor":"...","evidence":"..."},{"factor":"...","evidence":"..."}],
   "reasoning": ["...", "...", "..."],
+  "whatToWatch": "...",
+  "sources": [{"title":"...","url":"https://..."}],
   "confidence": 72,
   "action": "EXPLAIN",
-  "regionLabel": "${stats.startLabel}–${stats.endLabel}"
+  "regionLabel": "${win.replace(/"/g, '\\"')}"
   ,"learn": {
-    "rangeLabel": "${stats.startLabel}–${stats.endLabel}",
+    "rangeLabel": "${win.replace(/"/g, '\\"')}",
     "timeframe": "${stats.timeframe}",
     "topics": ["Macro","Technicals","Sentiment"],
     "terms": [{"id":"t1","term":"...","definition":"...","topic":"Macro"}],
@@ -567,7 +647,12 @@ Use only valid JSON strings (escape quotes inside text). No markdown.
     const parsed = parseModelJson(text, "chart explain")
     const thought = coerceMarketThought(parsed, ticker)
     thought.action = "EXPLAIN"
-    thought.regionLabel = thought.regionLabel ?? `${stats.startLabel}–${stats.endLabel}`
+    thought.regionLabel = thought.regionLabel ?? win
+    const allowed = new Set(articles.map((a) => a.url))
+    thought.sources = (thought.sources ?? []).filter((s) => allowed.has(s.url))
+    if ((!thought.sources || thought.sources.length === 0) && articles.length > 0) {
+      thought.sources = articles.slice(0, 3).map((a) => ({ title: a.title, url: a.url }))
+    }
     const p = parsed as Record<string, unknown>
     thought.learn = coerceLearnPack(p.learn, stats.timeframe, thought.regionLabel)
     return thought
@@ -579,7 +664,7 @@ Use only valid JSON strings (escape quotes inside text). No markdown.
       reasoning: [],
       confidence: 0,
       action: "ERROR",
-      regionLabel: `${stats.startLabel}–${stats.endLabel}`,
+      regionLabel: win,
     }
   }
 }
@@ -614,11 +699,20 @@ function coercePortfolioNewsItems(raw: unknown, tickers: string[]): PortfolioNew
     const title = String(o.title ?? `Item ${i + 1}`).slice(0, 200)
     const linkRaw = String(o.link ?? "#")
     const link = linkRaw.startsWith("http://") || linkRaw.startsWith("https://") ? linkRaw : "#"
+    const sourceLinks = Array.isArray(o.sourceLinks)
+      ? o.sourceLinks
+          .map((s) => ({
+            title: String((s as any)?.title ?? "").trim(),
+            url: String((s as any)?.url ?? "").trim(),
+          }))
+          .filter((s) => s.title && /^https?:\/\//.test(s.url))
+      : undefined
     return {
       id: String(o.id ?? `n-${i}-${title.slice(0, 8)}`),
       title,
       summary: String(o.summary ?? "").slice(0, 280),
       link,
+      sourceLinks,
       publisher: String(o.publisher ?? "Gemini desk"),
       publishedAt:
         typeof o.publishedAt === "number" && Number.isFinite(o.publishedAt)
@@ -632,34 +726,86 @@ function coercePortfolioNewsItems(raw: unknown, tickers: string[]): PortfolioNew
   })
 }
 
-/** Synthetic portfolio-relevant scan — one batched Gemini call (use with server cache). */
-export async function generatePortfolioNewsDigest(tickers: string[]): Promise<PortfolioNewsItem[]> {
+/** Rank and summarize real fetched articles into portfolio news cards. */
+export async function generatePortfolioNewsDigest(
+  tickers: string[],
+  articles: NewsArticle[]
+): Promise<PortfolioNewsItem[]> {
   const list = [...new Set(tickers.map((t) => t.trim().toUpperCase()).filter(Boolean))].slice(0, 24)
   if (list.length === 0) return []
+  if (articles.length === 0) return []
 
   const now = Date.now()
+  const articleLines = articles
+    .slice(0, 36)
+    .map(
+      (a, i) =>
+        `${i + 1}. [${a.id}] ${a.title} | ${a.publisher} | ${new Date(a.publishedAt).toISOString()} | ${a.url}`
+    )
+    .join("\n")
+
   const prompt = `Portfolio tickers: ${list.join(", ")}
-You are generating a **synthetic** short market scan for a private UI (not real wire headlines, not browsing the web). Invent 8–10 plausible headline + one-line blurbs that *could* matter for these names today — macro, sector, earnings tone, rates, AI capex, regulation, etc.
-Rules:
-- JSON only, shape: {"items":[{"id":"slug","title":"...","summary":"...","impactScore":78,"impactLabel":"high","matchedTickers":["TICK"],"ticker":"MAIN","publisher":"Gemini desk","publishedAt":${now},"link":"#"}]}
-- impactScore: integer 0-100 (higher = more important to this book).
-- publishedAt: unix ms, spread between ${now - 2_400_000} and ${now}.
-- link must be "#" (no URLs).
-- matchedTickers must be symbols from the portfolio list only.
-- Sort items by impactScore descending in the array.`
+Below are real article candidates for these symbols. Build 8-10 ranked portfolio news cards from them.
+
+Article candidates:
+${articleLines}
+
+Instructions:
+- Use ONLY the provided articles. Do not invent links or publishers.
+- Each output item must map to one concrete article from the list.
+- summary must be specific: 2 sentences max, with catalyst + why it matters for the ticker/book.
+- impactScore: 0-100 based on how important it is to this portfolio now.
+- impactLabel: high|medium|low.
+- matchedTickers: subset of portfolio tickers only.
+- Keep exact article URL in link and include sourceLinks with that same article.
+- Sort by impactScore descending.
+
+Return JSON:
+{
+  "items": [
+    {
+      "id": "article-id",
+      "title": "exact or lightly cleaned article title",
+      "summary": "specific 1-2 sentence summary",
+      "publisher": "publisher",
+      "publishedAt": ${now},
+      "link": "https://exact-article-url",
+      "sourceLinks": [{"title":"publisher","url":"https://exact-article-url"}],
+      "ticker": "AAPL",
+      "matchedTickers": ["AAPL"],
+      "impactScore": 78,
+      "impactLabel": "high"
+    }
+  ]
+}`
 
   try {
     const text = await withLlmQueue(() =>
       callLlm(prompt, {
         timeoutMs: NEWS_BUDGET_MS,
         maxRetries: 0,
-        maxOutputTokens: 900,
-        temperature: 0.62,
+        maxOutputTokens: 1200,
+        temperature: 0.35,
       })
     )
     const parsed = parseModelJson(text, "portfolio news")
     const rows = coercePortfolioNewsItems(parsed, list)
-    return [...rows].sort((a, b) => b.impactScore - a.impactScore)
+    const byUrl = new Map(articles.map((a) => [a.url, a]))
+    const byId = new Map(articles.map((a) => [a.id, a]))
+    const hydrated = rows.map((r) => {
+      const source = byUrl.get(r.link) ?? byId.get(r.id)
+      if (!source) return r
+      return {
+        ...r,
+        id: source.id,
+        title: r.title || source.title,
+        publisher: source.publisher,
+        publishedAt: source.publishedAt,
+        link: source.url,
+        sourceLinks: [{ title: source.publisher, url: source.url }],
+      }
+    })
+    return [...hydrated].sort((a, b) => b.impactScore - a.impactScore)
   } catch (e) {
     const msg = e instanceof Error ? e.message : "digest failed"
     throw new Error(`Portfolio news digest: ${msg}`)

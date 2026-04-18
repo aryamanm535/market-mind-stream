@@ -4,10 +4,16 @@ export type MarketThought = {
   ticker: string
   thought: string
   reasoning: string[]
+  /** Top 2 drivers, ranked by importance */
+  topFactors?: Array<{ factor: string; evidence: string }>
   confidence: number
   action: MarketAction
   /** Present for chart-region explanations */
   regionLabel?: string
+  /** Optional: next level/catalyst to watch */
+  whatToWatch?: string
+  /** Optional supporting links (education / references) */
+  sources?: Array<{ title: string; url: string }>
   /** Optional learning payload for games/flashcards */
   learn?: LearnPack
 }
@@ -17,11 +23,11 @@ export type ChartTimeframe = "1D" | "1W" | "1M" | "3M" | "1Y" | "5Y"
 
 export const CHART_TIMEFRAMES: { id: ChartTimeframe; short: string; detail: string }[] = [
   { id: "1D", short: "1D", detail: "Intraday · 5m" },
-  { id: "1W", short: "1W", detail: "Daily · 7 bars" },
-  { id: "1M", short: "1M", detail: "Daily · ~1 mo" },
-  { id: "3M", short: "3M", detail: "Weekly · quarter" },
-  { id: "1Y", short: "1Y", detail: "Monthly" },
-  { id: "5Y", short: "5Y", detail: "Quarterly" },
+  { id: "1W", short: "1W", detail: "1 wk · 3×/day" },
+  { id: "1M", short: "1M", detail: "1 mo · 3×/day" },
+  { id: "3M", short: "3M", detail: "1 qtr · daily" },
+  { id: "1Y", short: "1Y", detail: "1 yr · weekly" },
+  { id: "5Y", short: "5Y", detail: "5 yr · monthly" },
 ]
 
 export type ChartPoint = {
@@ -38,6 +44,9 @@ export type ChartSelectionRange = {
   endIndex: number
   startLabel: string
   endLabel: string
+  /** Full calendar labels for AI / UI (not the short D1 axis labels). */
+  startLabelFull?: string
+  endLabelFull?: string
   startPrice: number
   endPrice: number
   pctChange: number
@@ -124,6 +133,10 @@ export type PortfolioNewsItem = {
   title: string
   summary: string
   link: string
+  /** Optional list of source links (if available). */
+  sourceLinks?: Array<{ title: string; url: string }>
+  /** Small thumbnail url to render in news tab. */
+  imageUrl?: string
   publisher: string
   publishedAt: number
   /** Primary symbol the item is about */

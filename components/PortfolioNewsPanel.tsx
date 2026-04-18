@@ -141,21 +141,29 @@ export default function PortfolioNewsPanel({
                   href={it.link}
                   target="_blank"
                   rel="noreferrer"
-                  className="font-mono text-sm font-medium text-zinc-100 underline decoration-zinc-600 decoration-1 underline-offset-2 hover:text-emerald-200"
+                  className="text-sm font-semibold text-zinc-100 underline decoration-zinc-600 decoration-1 underline-offset-2 hover:text-emerald-200"
                 >
                   {it.title}
                 </a>
               ) : (
-                <span className="font-mono text-sm font-medium text-zinc-100">{it.title}</span>
+                <span className="text-sm font-semibold text-zinc-100">{it.title}</span>
               )
               return (
                 <li
                   key={it.id}
                   className="rounded-lg border border-zinc-800/90 bg-[#0a0d14] p-4 transition-colors hover:border-zinc-700"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    {titleEl}
-                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <div className="flex items-start gap-3">
+                    <img
+                      alt={`${it.ticker} thumbnail`}
+                      src={it.imageUrl || `/api/news/image?ticker=${encodeURIComponent(it.ticker)}`}
+                      className="mt-0.5 h-10 w-10 shrink-0 rounded-lg border border-zinc-800/80 bg-zinc-950/50"
+                      loading="lazy"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">{titleEl}</div>
+                        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                       <span
                         className={`rounded px-2 py-0.5 font-mono text-[10px] uppercase ${
                           it.impactLabel === "high"
@@ -170,7 +178,7 @@ export default function PortfolioNewsPanel({
                     </div>
                   </div>
                   {it.summary ? (
-                    <p className="mt-2 font-mono text-xs leading-relaxed text-zinc-400">{it.summary}</p>
+                    <p className="mt-2 text-sm leading-relaxed text-zinc-300">{it.summary}</p>
                   ) : null}
                   <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px] text-zinc-500">
                     <span>{it.publisher}</span>
@@ -183,6 +191,23 @@ export default function PortfolioNewsPanel({
                       </>
                     ) : null}
                     <span className="text-zinc-600">· {it.ticker}</span>
+                  </div>
+                  {it.sourceLinks?.length ? (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-zinc-800/80 pt-3">
+                      {it.sourceLinks.slice(0, 3).map((s) => (
+                        <a
+                          key={s.url}
+                          href={s.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md border border-zinc-800 bg-zinc-950/40 px-2.5 py-1.5 font-mono text-[11px] text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-200"
+                        >
+                          {s.title}
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                    </div>
                   </div>
                 </li>
               )

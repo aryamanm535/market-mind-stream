@@ -62,6 +62,29 @@ export default function AiThoughtCard({
         <div className="mt-1.5 font-mono text-[10px] text-cyan-500/80">{item.regionLabel}</div>
       ) : null}
       <p className="mt-2 text-sm leading-snug text-zinc-200">{item.thought}</p>
+      {item.topFactors?.length ? (
+        <div className="mt-2 rounded-md border border-zinc-800/80 bg-zinc-950/40 p-2.5">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+            Top factors
+          </div>
+          <ol className="mt-2 space-y-1.5">
+            {item.topFactors.slice(0, 2).map((f, idx) => (
+              <li key={idx} className="text-sm text-zinc-200">
+                <span className="font-semibold text-emerald-200">{idx + 1}. {f.factor}</span>
+                <div className="mt-0.5 text-xs leading-relaxed text-zinc-400">{f.evidence}</div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+      {item.whatToWatch ? (
+        <div className="mt-2 rounded-md border border-zinc-800/80 bg-zinc-950/40 p-2.5">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+            What to watch
+          </div>
+          <div className="mt-1 text-sm text-zinc-200">{item.whatToWatch}</div>
+        </div>
+      ) : null}
       {item.reasoning.length > 0 ? (
         <ul className="mt-2.5 space-y-1 border-t border-zinc-800/80 pt-2.5">
           {item.reasoning.map((r, j) => (
@@ -96,6 +119,25 @@ export default function AiThoughtCard({
               >
                 {b.label}
               </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {item.sources?.length ? (
+        <div className="mt-3 border-t border-zinc-800/80 pt-3">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">Sources</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {item.sources.slice(0, 4).map((s) => (
+              <a
+                key={s.url}
+                href={s.url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md border border-zinc-700 bg-zinc-950/40 px-2.5 py-1.5 font-mono text-[11px] text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-200"
+              >
+                {s.title}
+              </a>
             ))}
           </div>
         </div>

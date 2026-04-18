@@ -93,7 +93,7 @@ export default function LearnGamePanel({
               key={t.id}
               type="button"
               onClick={() => setSection(t.id)}
-              className={`rounded-md border px-3 py-1.5 font-mono text-[11px] transition-colors ${
+              className={`rounded-md border px-3 py-1.5 text-[11px] font-semibold tracking-wide transition-colors ${
                 section === t.id
                   ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
                   : "border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
@@ -113,7 +113,7 @@ export default function LearnGamePanel({
             {pack.driverGame?.choices?.length ?? 0} choices
           </span>
         </div>
-        <p className="mt-2 font-mono text-[11px] leading-relaxed text-zinc-400">{pack.driverGame?.prompt}</p>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-300">{pack.driverGame?.prompt}</p>
         <div className="mt-3 flex flex-wrap gap-2">
           {driverChoices.map((c, i) => {
             const chosen = driverPicked === i
@@ -124,7 +124,7 @@ export default function LearnGamePanel({
                 key={`${c.label}-${i}`}
                 type="button"
                 onClick={() => setDriverPicked(i)}
-                className={`rounded-md border px-3 py-2 font-mono text-[11px] transition-colors ${
+                className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
                   chosen
                     ? correct
                       ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-100"
@@ -133,7 +133,7 @@ export default function LearnGamePanel({
                 }`}
               >
                 {c.label}
-                <span className={`ml-2 rounded border px-1.5 py-0.5 text-[10px] ${topicColor(c.topic)}`}>
+                <span className={`ml-2 rounded border px-1.5 py-0.5 font-mono text-[10px] ${topicColor(c.topic)}`}>
                   {c.topic}
                 </span>
                 {wrong ? <span className="ml-2 text-[10px] text-red-300">✕</span> : null}
@@ -143,8 +143,8 @@ export default function LearnGamePanel({
           })}
         </div>
         {driverPicked != null ? (
-          <p className="mt-3 border-t border-zinc-800/80 pt-3 font-mono text-[11px] text-zinc-400">
-            <span className="text-zinc-200">Why:</span> {pack.driverGame.explanation}
+          <p className="mt-3 border-t border-zinc-800/80 pt-3 text-sm text-zinc-300">
+            <span className="font-semibold text-zinc-100">Why:</span> {pack.driverGame.explanation}
           </p>
         ) : null}
       </div>
@@ -159,7 +159,7 @@ export default function LearnGamePanel({
             return (
               <div key={q.id} className="rounded-md border border-zinc-800/80 bg-zinc-950/40 p-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="font-mono text-[11px] text-zinc-200">{q.prompt}</div>
+                  <div className="text-sm font-semibold text-zinc-100">{q.prompt}</div>
                   <span className={`rounded border px-2 py-0.5 font-mono text-[10px] ${topicColor(q.topic)}`}>
                     {q.topic}
                   </span>
@@ -182,7 +182,7 @@ export default function LearnGamePanel({
                         type="button"
                         disabled={sel != null}
                         onClick={() => answer(q, i)}
-                        className={`rounded-md border px-3 py-2 text-left font-mono text-[11px] transition-colors disabled:cursor-not-allowed ${cls}`}
+                        className={`rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed ${cls}`}
                       >
                         {c}
                       </button>
@@ -190,8 +190,8 @@ export default function LearnGamePanel({
                   })}
                 </div>
                 {sel != null ? (
-                  <p className="mt-2 font-mono text-[11px] text-zinc-400">
-                    <span className="text-zinc-200">Explanation:</span> {q.explanation}
+                  <p className="mt-2 text-sm text-zinc-300">
+                    <span className="font-semibold text-zinc-100">Explanation:</span> {q.explanation}
                   </p>
                 ) : null}
               </div>
@@ -209,17 +209,17 @@ export default function LearnGamePanel({
             sim only
           </span>
         </div>
-        <div className="mt-2 font-mono text-[11px] text-zinc-400">
-          <span className="text-zinc-200">{pack.tradeIdea.direction}:</span> {pack.tradeIdea.thesis}
+        <div className="mt-2 text-sm text-zinc-300">
+          <span className="font-semibold text-zinc-100">{pack.tradeIdea.direction}:</span> {pack.tradeIdea.thesis}
         </div>
         <div className="mt-2 grid gap-2 md:grid-cols-2">
           <div className="rounded-md border border-zinc-800/80 bg-zinc-950/40 p-3">
             <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">Risk</div>
-            <div className="mt-1 font-mono text-[11px] text-zinc-300">{pack.tradeIdea.risk}</div>
+            <div className="mt-1 text-sm text-zinc-200">{pack.tradeIdea.risk}</div>
           </div>
           <div className="rounded-md border border-zinc-800/80 bg-zinc-950/40 p-3">
             <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">Invalidation</div>
-            <div className="mt-1 font-mono text-[11px] text-zinc-300">{pack.tradeIdea.invalidation}</div>
+            <div className="mt-1 text-sm text-zinc-200">{pack.tradeIdea.invalidation}</div>
           </div>
         </div>
       </div>

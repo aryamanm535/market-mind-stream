@@ -13,7 +13,6 @@ function prng(seed: number, i: number): number {
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 function intradayLabel(i: number): string {
   const minutes = 9 * 60 + 30 + i * 5
@@ -33,11 +32,13 @@ type TfSpec = { points: number; vol: number; drift: number; wave: number; cycle:
 
 const TF: Record<ChartTimeframe, TfSpec> = {
   "1D": { points: 48, vol: 0.35, drift: 0.02, wave: 0.08, cycle: 1 },
-  "1W": { points: 7, vol: 1.1, drift: 0.12, wave: 0.22, cycle: 1.2 },
-  "1M": { points: 22, vol: 0.85, drift: 0.07, wave: 0.14, cycle: 2.5 },
-  "3M": { points: 13, vol: 1.4, drift: 0.18, wave: 0.35, cycle: 2 },
-  "1Y": { points: 12, vol: 2.8, drift: 0.35, wave: 0.75, cycle: 1.8 },
-  "5Y": { points: 20, vol: 5.5, drift: 0.8, wave: 1.3, cycle: 2.2 },
+  // Multi-day horizons: use a higher sampling density so the chart feels "alive".
+  // Requirement: 1M should have ~3 samples per trading day.
+  "1W": { points: 15, vol: 1.1, drift: 0.12, wave: 0.22, cycle: 1.2 }, // 5 trading days * 3
+  "1M": { points: 66, vol: 0.85, drift: 0.07, wave: 0.14, cycle: 2.5 }, // 22 trading days * 3
+  "3M": { points: 66, vol: 1.4, drift: 0.18, wave: 0.35, cycle: 2 }, // ~1 sample / trading day
+  "1Y": { points: 52, vol: 2.8, drift: 0.35, wave: 0.75, cycle: 1.8 }, // weekly
+  "5Y": { points: 60, vol: 5.5, drift: 0.8, wave: 1.3, cycle: 2.2 }, // monthly
 }
 
 function labelFor(tf: ChartTimeframe, i: number): string {
@@ -45,15 +46,14 @@ function labelFor(tf: ChartTimeframe, i: number): string {
     case "1D":
       return intradayLabel(i)
     case "1W":
-      return WEEKDAYS[i] ?? `D${i + 1}`
     case "1M":
-      return `D${i + 1}`
+      return `D${Math.floor(i / 3) + 1}`
     case "3M":
-      return `W${i + 1}`
+      return `D${i + 1}`
     case "1Y":
-      return MONTHS[i] ?? `M${i + 1}`
+      return `W${i + 1}`
     case "5Y":
-      return quarterLabel(i)
+      return MONTHS[i % 12] ?? `M${i + 1}`
     default:
       return String(i)
   }
@@ -66,17 +66,36 @@ function labelFor(tf: ChartTimeframe, i: number): string {
 export function buildSimulatedSeries(ticker: string, timeframe: ChartTimeframe): ChartPoint[] {
   const seed = hashSeed(`${ticker}|${timeframe}`)
   const spec = TF[timeframe]
-  const base = 80 + (seed % 120)
+  // "More like real tickers": base is roughly log-uniform (penny → mega-cap prices),
+  // deterministic per ticker, and stable across timeframes.
+  const baseU = prng(hashSeed(ticker), 1)
+  const base = Math.round(Math.exp(Math.log(8) + baseU * (Math.log(1500) - Math.log(8))) * 100) / 100
   const driftSign = ((seed % 17) - 8) * 0.001
   const cycleLen = spec.cycle * (3 + (seed % 5))
 
   let price = base
+  let ret = 0 // AR-ish return component for jaggedness
   const out: ChartPoint[] = []
 
   for (let i = 0; i < spec.points; i++) {
-    const noise = (prng(seed, i * 17 + timeframe.length) - 0.5) * spec.vol
+    // Market-like: heteroskedastic noise + occasional jumps + autocorrelated returns
+    const u = prng(seed, i * 17 + timeframe.length)
+    const v = prng(seed, i * 29 + 7)
+    const w = prng(seed, i * 41 + 13)
+
     const wave = Math.sin(i / cycleLen) * spec.wave * (2 + (seed % 3) * 0.15)
-    price += spec.drift * driftSign * 10 + wave + noise * 0.4
+    const vol = spec.vol * (0.7 + 0.9 * Math.abs(Math.sin(i / (1.7 + (seed % 5) * 0.25))))
+    const noise = (u - 0.5) * vol
+
+    // Rare jump events (earnings-like gaps), probability scales with timeframe
+    const jumpP = timeframe === "1D" ? 0.06 : timeframe === "1W" ? 0.08 : timeframe === "1M" ? 0.07 : 0.05
+    const jump = w < jumpP ? (v - 0.5) * vol * (timeframe === "5Y" ? 10 : timeframe === "1Y" ? 6 : 4) : 0
+
+    // AR return: keeps it jagged but coherent
+    ret = 0.45 * ret + noise + jump
+    const drift = spec.drift * driftSign * (timeframe === "1D" ? 6 : timeframe === "1W" ? 10 : 14)
+
+    price += drift + wave + ret
     price = Math.max(12, price)
 
     out.push({
