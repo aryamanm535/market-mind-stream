@@ -31,9 +31,12 @@ export const CHART_TIMEFRAMES: { id: ChartTimeframe; short: string; detail: stri
 ]
 
 export type ChartPoint = {
+  /** X index for Recharts (0..n-1) */
   time: number
   label: string
   price: number
+  /** Bar time (seconds since epoch) when data comes from Yahoo — used for explain date strings. */
+  ts?: number
 }
 
 export type ChartSelectionRange = {

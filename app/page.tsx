@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import StockChart from "@/components/StockChart"
 import AiThoughtCard from "@/components/AiThoughtCard"
 import PortfolioNewsPanel from "@/components/PortfolioNewsPanel"
@@ -12,6 +12,7 @@ import { useLearningStore } from "@/hooks/useLearningStore"
 import { buildSimulatedSeries } from "@/lib/chartSeries"
 import {
   CHART_TIMEFRAMES,
+  type ChartPoint,
   type ChartSelectionRange,
   type ChartTimeframe,
   type LearnPack,
@@ -46,10 +47,52 @@ export default function Home() {
   const learning = useLearningStore()
 
   const sym = chartSymbol.trim().toUpperCase()
-  const chartData = useMemo(
-    () => buildSimulatedSeries(sym || "AAPL", chartTimeframe),
-    [sym, chartTimeframe]
+  const [chartData, setChartData] = useState<ChartPoint[]>([])
+  const [chartHint, setChartHint] = useState<string | null>(null)
+  const [chartSource, setChartSource] = useState<"finnhub" | "twelvedata" | "yahoo" | "demo">(
+    "yahoo"
   )
+
+  useEffect(() => {
+    let cancelled = false
+    setChartHint(null)
+    ;(async () => {
+      try {
+        const res = await fetch(
+          `/api/chart?symbol=${encodeURIComponent(sym)}&timeframe=${chartTimeframe}`
+        )
+        const json = (await res.json()) as {
+          points?: ChartPoint[]
+          error?: string
+          source?: string
+        }
+        if (cancelled) return
+        const pts = Array.isArray(json.points) ? json.points : []
+        if (res.ok && pts.length > 0) {
+          setChartData(pts)
+          setChartHint(null)
+          const src = json.source
+          if (src === "finnhub" || src === "twelvedata" || src === "yahoo") {
+            setChartSource(src)
+          } else {
+            setChartSource("yahoo")
+          }
+          return
+        }
+        throw new Error(typeof json.error === "string" ? json.error : "No chart bars returned")
+      } catch {
+        if (cancelled) return
+        setChartData(buildSimulatedSeries(sym || "AAPL", chartTimeframe))
+        setChartSource("demo")
+        setChartHint(
+          "Could not load live prices (network, symbol, or data provider error). Try another ticker, refresh, or add TWELVE_DATA_API_KEY in .env.local as a backup — then restart `npm run dev`."
+        )
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [sym, chartTimeframe])
 
   useEffect(() => {
     setFeed([])
@@ -286,7 +329,16 @@ export default function Home() {
                     {sym}
                   </span>
                   <span className="font-mono text-xs text-zinc-500">
-                    {CHART_TIMEFRAMES.find((x) => x.id === chartTimeframe)?.detail ?? "simulated"}
+                    {CHART_TIMEFRAMES.find((x) => x.id === chartTimeframe)?.detail ?? ""}
+                    {chartHint ? (
+                      <span className="text-amber-400/90"> · simulated</span>
+                    ) : chartSource === "finnhub" ? (
+                      <span className="text-emerald-500/70"> · Finnhub</span>
+                    ) : chartSource === "twelvedata" ? (
+                      <span className="text-emerald-500/70"> · Twelve Data</span>
+                    ) : (
+                      <span className="text-emerald-500/70"> · Yahoo Finance</span>
+                    )}
                   </span>
                 </div>
               </div>
@@ -311,6 +363,11 @@ export default function Home() {
             </header>
 
             <div className="min-h-0 min-w-0 flex-1 overflow-auto p-5">
+              {chartHint ? (
+                <div className="mb-3 rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 font-mono text-[11px] text-amber-100/95">
+                  {chartHint}
+                </div>
+              ) : null}
               <StockChart
                 data={chartData}
                 ticker={sym}

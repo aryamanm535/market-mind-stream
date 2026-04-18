@@ -1,4 +1,4 @@
-import type { ChartTimeframe } from "./types"
+import type { ChartPoint, ChartTimeframe } from "./types"
 
 /** Normalize to last Mon–Fri on or before `d` (local TZ). */
 function normalizeToTradingDay(d: Date): Date {
@@ -99,4 +99,16 @@ export function fullDateLabelForSeriesIndex(
     default:
       return String(index)
   }
+}
+
+/** Use real bar timestamps when present (Yahoo), else simulated index-based labels. */
+export function explainDateLabel(timeframe: ChartTimeframe, index: number, point: ChartPoint): string {
+  if (point.ts != null) {
+    const d = new Date(point.ts * 1000)
+    if (timeframe === "1D" || timeframe === "1W") {
+      return formatFullDateTime(d)
+    }
+    return formatFullDate(d)
+  }
+  return fullDateLabelForSeriesIndex(timeframe, index)
 }

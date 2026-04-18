@@ -16,7 +16,7 @@ import {
   useYAxisScale,
   type ChartOffset,
 } from "recharts"
-import { fullDateLabelForSeriesIndex } from "@/lib/chartDateLabels"
+import { explainDateLabel } from "@/lib/chartDateLabels"
 import type { ChartPoint, ChartSelectionRange, ChartTimeframe } from "@/lib/types"
 
 /** Fallback until Recharts reports real plot offsets (matches margin + default Y-axis width ~52px). */
@@ -42,6 +42,8 @@ function buildSelection(
       endIndex: 0,
       startLabel: "",
       endLabel: "",
+      startLabelFull: "",
+      endLabelFull: "",
       startPrice: 0,
       endPrice: 0,
       pctChange: 0,
@@ -64,8 +66,8 @@ function buildSelection(
     endIndex: hi,
     startLabel: a.label,
     endLabel: b.label,
-    startLabelFull: fullDateLabelForSeriesIndex(timeframe, lo),
-    endLabelFull: fullDateLabelForSeriesIndex(timeframe, hi),
+    startLabelFull: explainDateLabel(timeframe, lo, a),
+    endLabelFull: explainDateLabel(timeframe, hi, b),
     startPrice: a.price,
     endPrice: b.price,
     pctChange: Math.round(pct * 100) / 100,
