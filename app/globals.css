@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+:root {
+  --background: #030306;
+  --foreground: #f4f4f5;
+  --terminal-green: #4ade80;
+  --terminal-grid: rgba(39, 39, 42, 0.5);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+::selection {
+  background: rgba(74, 222, 128, 0.25);
+}
