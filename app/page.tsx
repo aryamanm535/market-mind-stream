@@ -1,12 +1,14 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { AnimatePresence, motion } from "framer-motion"
 import StockChart from "@/components/StockChart"
 import AiThoughtCard from "@/components/AiThoughtCard"
 import PortfolioNewsPanel from "@/components/PortfolioNewsPanel"
 import LearnGamePanel from "@/components/LearnGamePanel"
 import FlashcardsPanel from "@/components/FlashcardsPanel"
 import MasteryPanel from "@/components/MasteryPanel"
+import LandingView from "@/components/LandingView"
 import { useLocalPortfolio } from "@/hooks/useLocalPortfolio"
 import { useLearningStore } from "@/hooks/useLearningStore"
 import { buildSimulatedSeries } from "@/lib/chartSeries"
@@ -15,24 +17,24 @@ import {
   type ChartPoint,
   type ChartSelectionRange,
   type ChartTimeframe,
+  type ExplainMode,
   type LearnPack,
   type MarketThought,
 } from "@/lib/types"
 
-const PRESETS = ["AAPL", "NVDA", "TSLA"] as const
+const PRESETS = ["AAPL", "NVDA", "TSLA", "AMZN", "GOOG"] as const
 
-/** Must exceed server GEMINI_EXPLAIN_TIMEOUT_MS so Gemini can finish before the browser aborts. */
 const EXPLAIN_CLIENT_MS = Math.max(
   8000,
   Number(process.env.NEXT_PUBLIC_EXPLAIN_CLIENT_TIMEOUT_MS ?? 22_000)
 )
 
-type Tab = "terminal" | "news" | "learn"
+type Tab = "home" | "terminal" | "news" | "learn"
 type LearnTab = "game" | "flashcards" | "mastery"
 type GameSection = "driver" | "quiz" | "trade"
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("terminal")
+  const [tab, setTab] = useState<Tab>("home")
   const [learnTab, setLearnTab] = useState<LearnTab>("game")
   const [gameSection, setGameSection] = useState<GameSection>("driver")
   const [feed, setFeed] = useState<MarketThought[]>([])
@@ -40,8 +42,9 @@ export default function Home() {
   const [chartSymbol, setChartSymbol] = useState("AAPL")
   const [symbolDraft, setSymbolDraft] = useState("")
   const [chartBusy, setChartBusy] = useState(false)
-  const [chartTimeframe, setChartTimeframe] = useState<ChartTimeframe>("1D")
+  const [chartTimeframe, setChartTimeframe] = useState<ChartTimeframe>("1M")
   const [chartMode, setChartMode] = useState<"explain" | "draw">("explain")
+  const [explainMode, setExplainMode] = useState<ExplainMode>("beginner")
   const [newTicker, setNewTicker] = useState("")
   const portfolio = useLocalPortfolio()
   const learning = useLearningStore()
@@ -85,7 +88,7 @@ export default function Home() {
         setChartData(buildSimulatedSeries(sym || "AAPL", chartTimeframe))
         setChartSource("demo")
         setChartHint(
-          "Could not load live prices (network, symbol, or data provider error). Try another ticker, refresh, or add TWELVE_DATA_API_KEY in .env.local as a backup — then restart `npm run dev`."
+          "Live prices unavailable — showing a simulated series. Add TWELVE_DATA_API_KEY in .env.local for backup."
         )
       }
     })()
@@ -108,7 +111,7 @@ export default function Home() {
         const res = await fetch("/api/explain", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ stock: sym, range }),
+          body: JSON.stringify({ stock: sym, range, mode: explainMode }),
           signal: ac.signal,
         })
         const text = await res.text()
@@ -146,7 +149,7 @@ export default function Home() {
         const msg =
           e instanceof Error
             ? e.name === "AbortError"
-              ? `Request timed out (${Math.round(EXPLAIN_CLIENT_MS / 1000)}s). Increase NEXT_PUBLIC_EXPLAIN_CLIENT_TIMEOUT_MS or GEMINI_EXPLAIN_TIMEOUT_MS if Gemini is slow.`
+              ? `Request timed out (${Math.round(EXPLAIN_CLIENT_MS / 1000)}s).`
               : e.message
             : "Network error"
         const errCard: MarketThought = {
@@ -162,17 +165,15 @@ export default function Home() {
         setChartBusy(false)
       }
     },
-    [chartMode, learning, sym]
+    [chartMode, learning, sym, explainMode]
   )
 
   const launchLearn = useCallback(
     (pack: LearnPack, dest: "driver" | "quiz" | "trade" | "flashcards" | "mastery") => {
       setLastPack(pack)
-      if (dest === "flashcards") {
-        setLearnTab("flashcards")
-      } else if (dest === "mastery") {
-        setLearnTab("mastery")
-      } else {
+      if (dest === "flashcards") setLearnTab("flashcards")
+      else if (dest === "mastery") setLearnTab("mastery")
+      else {
         setLearnTab("game")
         setGameSection(dest)
       }
@@ -191,243 +192,244 @@ export default function Home() {
     if (ok) setNewTicker("")
   }
 
+  const goExplore = (symbol: string, tf: ChartTimeframe) => {
+    applyChartSymbol(symbol)
+    setChartTimeframe(tf)
+    setTab("terminal")
+  }
+
   return (
-    <div className="flex min-h-screen flex-col bg-[#030306] text-zinc-100">
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800/90 bg-[#050508] px-4 py-2">
-        <div className="mr-4 font-mono text-[10px] font-medium uppercase tracking-[0.2em] text-emerald-500/90">
-          Market Mind
-        </div>
-        <nav className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => setTab("terminal")}
-            className={`rounded-md border px-4 py-2 font-mono text-xs uppercase tracking-wide transition-colors ${
-              tab === "terminal"
-                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
-                : "border-transparent text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
-            }`}
+    <div className="flex min-h-screen flex-col">
+      <TopNav tab={tab} onTab={setTab} />
+
+      <AnimatePresence mode="wait">
+        {tab === "home" ? (
+          <motion.div
+            key="home"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex-1"
           >
-            Terminal
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("news")}
-            className={`rounded-md border px-4 py-2 font-mono text-xs uppercase tracking-wide transition-colors ${
-              tab === "news"
-                ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-100"
-                : "border-transparent text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
-            }`}
+            <LandingView
+              onSelect={(s, tf) => goExplore(s, tf)}
+              onSearch={(s) => goExplore(s, "1M")}
+            />
+          </motion.div>
+        ) : tab === "terminal" ? (
+          <motion.div
+            key="terminal"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex min-h-0 flex-1"
           >
-            Portfolio news
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("learn")}
-            className={`rounded-md border px-4 py-2 font-mono text-xs uppercase tracking-wide transition-colors ${
-              tab === "learn"
-                ? "border-amber-500/50 bg-amber-500/10 text-amber-100"
-                : "border-transparent text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
-            }`}
-          >
-            Learn
-          </button>
-        </nav>
-      </header>
-
-      {tab === "terminal" ? (
-        <div className="flex min-h-0 flex-1">
-          <aside className="flex w-[240px] shrink-0 flex-col border-r border-zinc-800/90 bg-[#050508]">
-            <div className="border-b border-zinc-800/90 p-4">
-              <h1 className="font-mono text-sm font-semibold tracking-tight text-zinc-200">
-                Chart symbol
-              </h1>
-              <p className="mt-1 font-mono text-[10px] leading-relaxed text-zinc-500">
-                Any ticker; pick a horizon below. Drag on the chart to explain that window.
-              </p>
-            </div>
-            <div className="border-b border-zinc-800/90 p-3">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                Horizon
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {CHART_TIMEFRAMES.map((tf) => (
-                  <button
-                    key={tf.id}
-                    type="button"
-                    onClick={() => setChartTimeframe(tf.id)}
-                    title={tf.detail}
-                    className={`rounded border px-2 py-1 font-mono text-[10px] transition-colors ${
-                      chartTimeframe === tf.id
-                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-100"
-                        : "border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
-                    }`}
-                  >
-                    {tf.short}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 font-mono text-[9px] leading-snug text-zinc-600">{CHART_TIMEFRAMES.find((x) => x.id === chartTimeframe)?.detail}</p>
-            </div>
-            <div className="p-3">
-              <div className="mb-2 flex gap-2">
-                <input
-                  value={symbolDraft}
-                  onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      applyChartSymbol(symbolDraft)
-                      setSymbolDraft("")
-                    }
-                  }}
-                  placeholder="e.g. AMD"
-                  className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-2 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-500/50"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    applyChartSymbol(symbolDraft)
-                    setSymbolDraft("")
-                  }}
-                  className="shrink-0 rounded-md border border-emerald-600/50 bg-emerald-500/10 px-3 py-2 font-mono text-xs text-emerald-200 hover:bg-emerald-500/20"
-                >
-                  Set
-                </button>
-              </div>
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                Quick
-              </div>
-              <nav className="space-y-1">
-                {PRESETS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setChartSymbol(s)}
-                    className={`flex w-full items-center justify-between rounded-md border px-3 py-2.5 text-left font-mono text-sm transition-colors ${
-                      sym === s
-                        ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
-                        : "border-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/60 hover:text-zinc-200"
-                    }`}
-                  >
-                    {s}
-                    {sym === s ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#4ade80]" />
-                    ) : null}
-                  </button>
-                ))}
-              </nav>
-            </div>
-          </aside>
-
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/90 bg-[#06080c] px-5 py-3">
-              <div>
-                <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-                  Active chart
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-2xl font-semibold tracking-tight text-white">
-                    {sym}
-                  </span>
-                  <span className="font-mono text-xs text-zinc-500">
-                    {CHART_TIMEFRAMES.find((x) => x.id === chartTimeframe)?.detail ?? ""}
-                    {chartHint ? (
-                      <span className="text-amber-400/90"> · simulated</span>
-                    ) : chartSource === "finnhub" ? (
-                      <span className="text-emerald-500/70"> · Finnhub</span>
-                    ) : chartSource === "twelvedata" ? (
-                      <span className="text-emerald-500/70"> · Twelve Data</span>
-                    ) : (
-                      <span className="text-emerald-500/70"> · Yahoo Finance</span>
-                    )}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setChartMode((m) => (m === "explain" ? "draw" : "explain"))}
-                  className={`rounded-md border px-3 py-2 font-mono text-[11px] transition-colors ${
-                    chartMode === "explain"
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
-                      : "border-sky-500/40 bg-sky-500/10 text-sky-100"
-                  }`}
-                >
-                  {chartMode === "explain" ? "Explain: drag select" : "Draw: compare lines"}
-                </button>
-                <div className="hidden font-mono text-[11px] text-zinc-500 md:block">
-                  {chartMode === "explain"
-                    ? "Drag-select to pull explanation + linked articles."
-                    : "Click two points to draw comparison lines."}
-                </div>
-              </div>
-            </header>
-
-            <div className="min-h-0 min-w-0 flex-1 overflow-auto p-5">
-              {chartHint ? (
-                <div className="mb-3 rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 font-mono text-[11px] text-amber-100/95">
-                  {chartHint}
-                </div>
-              ) : null}
-              <StockChart
-                data={chartData}
-                ticker={sym}
-                timeframe={chartTimeframe}
-                mode={chartMode}
-                onSelect={explainMove}
-                busy={chartBusy}
-              />
-            </div>
-          </main>
-
-          <section className="flex w-[min(420px,38vw)] shrink-0 flex-col border-l border-zinc-800/90 bg-[#050508]">
-            <div className="border-b border-zinc-800/90 p-4">
-              <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-zinc-300">
-                Chart explanations
-              </h2>
-              <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
-                Drag across the graph; each card explains gain/loss in that time slice (Gemini,
-                structured JSON).
-              </p>
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {feed.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-zinc-800 p-6 text-center font-mono text-xs text-zinc-500">
-                  Select a range on the chart to generate an explanation.
-                </div>
-              ) : (
-                feed.map((item, i) => (
-                  <AiThoughtCard
-                    key={`${i}-${item.ticker}-${item.confidence}-${item.action}-${item.thought.length}`}
-                    item={item}
-                    i={i}
-                    onLaunchLearn={launchLearn}
-                  />
-                ))
-              )}
-            </div>
-          </section>
-        </div>
-      ) : (
-        tab === "learn" ? (
-          <div className="flex min-h-0 flex-1">
-            <aside className="flex w-[260px] shrink-0 flex-col border-r border-zinc-800/90 bg-[#050508]">
-              <div className="border-b border-zinc-800/90 p-4">
-                <h2 className="font-mono text-sm font-semibold text-zinc-200">Learn</h2>
-                <p className="mt-1 font-mono text-[10px] leading-relaxed text-zinc-500">
-                  Game + flashcards + mastery. Terms and performance are stored in this browser.
+            <aside className="flex w-[260px] shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur-xl">
+              <div className="border-b border-white/5 p-5">
+                <h1 className="text-sm font-semibold text-white">Chart symbol</h1>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                  Pick a ticker + horizon. Drag on the chart to explain that window.
                 </p>
               </div>
-              <div className="border-b border-zinc-800/90 p-3">
+              <div className="border-b border-white/5 p-4">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Horizon
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {CHART_TIMEFRAMES.map((tf) => (
+                    <button
+                      key={tf.id}
+                      type="button"
+                      onClick={() => setChartTimeframe(tf.id)}
+                      title={tf.detail}
+                      className={`rounded-full border px-2.5 py-1 font-mono text-[10px] transition-all ${
+                        chartTimeframe === tf.id
+                          ? "border-emerald-400/60 bg-emerald-400/15 text-emerald-100"
+                          : "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
+                      }`}
+                    >
+                      {tf.short}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="mb-2 flex gap-2">
+                  <input
+                    value={symbolDraft}
+                    onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        applyChartSymbol(symbolDraft)
+                        setSymbolDraft("")
+                      }
+                    }}
+                    placeholder="e.g. AMD"
+                    className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyChartSymbol(symbolDraft)
+                      setSymbolDraft("")
+                    }}
+                    className="shrink-0 rounded-xl brand-gradient-bg px-3 py-2 text-xs font-semibold text-white hover:scale-105 active:scale-95"
+                  >
+                    Go
+                  </button>
+                </div>
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Presets
+                </div>
+                <nav className="space-y-1">
+                  {PRESETS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setChartSymbol(s)}
+                      className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left font-mono text-sm transition-all ${
+                        sym === s
+                          ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-100"
+                          : "border-transparent text-slate-300 hover:border-white/10 hover:bg-white/5"
+                      }`}
+                    >
+                      {s}
+                      {sym === s ? (
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                      ) : null}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+            </aside>
+
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-6 py-4">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    Active chart
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold tracking-tight text-white">{sym}</span>
+                    <span className="text-[12px] text-slate-400">
+                      {CHART_TIMEFRAMES.find((x) => x.id === chartTimeframe)?.detail ?? ""}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {chartHint ? (
+                        <span className="text-amber-400/90">· simulated</span>
+                      ) : chartSource === "finnhub" ? (
+                        <span className="text-emerald-400/70">· Finnhub</span>
+                      ) : chartSource === "twelvedata" ? (
+                        <span className="text-emerald-400/70">· Twelve Data</span>
+                      ) : (
+                        <span className="text-emerald-400/70">· Yahoo Finance</span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Beginner / Analyst toggle */}
+                  <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1">
+                    {(["beginner", "analyst"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setExplainMode(m)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-all ${
+                          explainMode === m
+                            ? m === "beginner"
+                              ? "bg-emerald-400/20 text-emerald-200"
+                              : "bg-violet-400/20 text-violet-200"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setChartMode((m) => (m === "explain" ? "draw" : "explain"))}
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all ${
+                      chartMode === "explain"
+                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100"
+                        : "border-violet-400/40 bg-violet-400/10 text-violet-100"
+                    }`}
+                  >
+                    {chartMode === "explain" ? "Explain: drag" : "Draw: compare"}
+                  </button>
+                </div>
+              </header>
+
+              <div className="min-h-0 min-w-0 flex-1 overflow-auto scroll-soft p-6">
+                {chartHint ? (
+                  <div className="mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2.5 text-[12px] text-amber-100">
+                    {chartHint}
+                  </div>
+                ) : null}
+                <StockChart
+                  data={chartData}
+                  ticker={sym}
+                  timeframe={chartTimeframe}
+                  mode={chartMode}
+                  onSelect={explainMove}
+                  busy={chartBusy}
+                />
+              </div>
+            </main>
+
+            <section className="flex w-[min(420px,38vw)] shrink-0 flex-col border-l border-white/5 bg-black/20 backdrop-blur-xl">
+              <div className="border-b border-white/5 p-5">
+                <h2 className="text-sm font-semibold text-white">AI Explanations</h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                  Drag across the chart — each card explains the move using recent news.
+                </p>
+              </div>
+              <div className="flex-1 overflow-y-auto scroll-soft p-4">
+                {feed.length === 0 ? (
+                  <EmptyFeed />
+                ) : (
+                  feed.map((item, i) => (
+                    <AiThoughtCard
+                      key={`${i}-${item.ticker}-${item.confidence}-${item.action}-${item.thought.length}`}
+                      item={item}
+                      i={i}
+                      onLaunchLearn={launchLearn}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+          </motion.div>
+        ) : tab === "learn" ? (
+          <motion.div
+            key="learn"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex min-h-0 flex-1"
+          >
+            <aside className="flex w-[260px] shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur-xl">
+              <div className="border-b border-white/5 p-5">
+                <h2 className="text-sm font-semibold text-white">Learn</h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                  Game, flashcards, and mastery — all stored locally.
+                </p>
+              </div>
+              <div className="border-b border-white/5 p-4">
                 <div className="flex gap-1">
                   {(["game", "flashcards", "mastery"] as const).map((t) => (
                     <button
                       key={t}
                       type="button"
                       onClick={() => setLearnTab(t)}
-                      className={`rounded-md border px-3 py-2 font-mono text-[11px] uppercase transition-colors ${
+                      className={`flex-1 rounded-full border px-3 py-1.5 text-[11px] font-medium capitalize transition-all ${
                         learnTab === t
-                          ? "border-amber-500/50 bg-amber-500/10 text-amber-100"
-                          : "border-transparent text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
+                          ? "border-amber-400/40 bg-amber-400/10 text-amber-100"
+                          : "border-transparent text-slate-400 hover:border-white/10 hover:text-slate-200"
                       }`}
                     >
                       {t}
@@ -435,16 +437,19 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-              <div className="p-3">
-                <div className="rounded-lg border border-zinc-800/90 bg-zinc-950/40 p-3">
-                  <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+              <div className="p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                     Latest selection
                   </div>
-                  <div className="mt-1 font-mono text-xs text-zinc-200">
+                  <div className="mt-1 text-[13px] text-white">
                     {lastPack ? `${lastPack.rangeLabel} · ${lastPack.timeframe}` : "—"}
                   </div>
-                  <div className="mt-2 font-mono text-[11px] text-zinc-500">
-                    Terms tracked: <span className="text-zinc-200">{Object.keys(learning.store.terms).length}</span>
+                  <div className="mt-2 text-[11px] text-slate-400">
+                    Terms tracked:{" "}
+                    <span className="font-semibold text-emerald-300">
+                      {Object.keys(learning.store.terms).length}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -452,7 +457,7 @@ export default function Home() {
 
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
               {learnTab === "game" ? (
-                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-5">
+                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-soft p-6">
                   {lastPack ? (
                     <LearnGamePanel
                       pack={lastPack}
@@ -460,8 +465,8 @@ export default function Home() {
                       initialSection={gameSection}
                     />
                   ) : (
-                    <div className="rounded-lg border border-dashed border-zinc-800 p-8 text-center font-mono text-sm text-zinc-500">
-                      Select a chart range in Terminal to generate a game pack.
+                    <div className="rounded-3xl border border-dashed border-white/10 p-10 text-center text-sm text-slate-400">
+                      Select a chart range in the Terminal to generate a game pack.
                     </div>
                   )}
                 </div>
@@ -471,59 +476,131 @@ export default function Home() {
                 <MasteryPanel />
               )}
             </main>
-          </div>
+          </motion.div>
         ) : (
-        <div className="flex min-h-0 flex-1">
-          <aside className="flex w-[260px] shrink-0 flex-col border-r border-zinc-800/90 bg-[#050508]">
-            <div className="border-b border-zinc-800/90 p-4">
-              <h2 className="font-mono text-sm font-semibold text-zinc-200">Portfolio</h2>
-              <p className="mt-1 font-mono text-[10px] leading-relaxed text-zinc-500">
-                Stored in this browser. Scans are generated by Gemini (synthetic desk lines), not
-                live headline feeds.
-              </p>
-            </div>
-            <div className="flex flex-1 flex-col gap-3 p-3">
-              <div className="flex gap-2">
-                <input
-                  value={newTicker}
-                  onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addPortfolio()
-                  }}
-                  placeholder="Add ticker"
-                  className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-2 font-mono text-sm outline-none focus:border-cyan-500/50"
-                />
-                <button
-                  type="button"
-                  onClick={addPortfolio}
-                  className="shrink-0 rounded-md border border-cyan-600/40 bg-cyan-500/10 px-3 py-2 font-mono text-xs text-cyan-100 hover:bg-cyan-500/20"
-                >
-                  Add
-                </button>
+          <motion.div
+            key="news"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex min-h-0 flex-1"
+          >
+            <aside className="flex w-[260px] shrink-0 flex-col border-r border-white/5 bg-black/20 backdrop-blur-xl">
+              <div className="border-b border-white/5 p-5">
+                <h2 className="text-sm font-semibold text-white">Portfolio</h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                  Stored locally. Scans built from Gemini synthesis.
+                </p>
               </div>
-              <ul className="flex flex-1 flex-col gap-1 overflow-y-auto">
-                {portfolio.symbols.map((t) => (
-                  <li
-                    key={t}
-                    className="flex items-center justify-between rounded-md border border-zinc-800/80 bg-zinc-950/50 px-3 py-2 font-mono text-sm"
+              <div className="flex flex-1 flex-col gap-3 p-4">
+                <div className="flex gap-2">
+                  <input
+                    value={newTicker}
+                    onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") addPortfolio()
+                    }}
+                    placeholder="Add ticker"
+                    className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-violet-400/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={addPortfolio}
+                    className="shrink-0 rounded-xl border border-violet-400/40 bg-violet-400/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-400/20"
                   >
-                    {t}
-                    <button
-                      type="button"
-                      onClick={() => portfolio.remove(t)}
-                      className="text-[11px] text-zinc-500 hover:text-red-400"
+                    Add
+                  </button>
+                </div>
+                <ul className="flex flex-1 flex-col gap-1.5 overflow-y-auto scroll-soft">
+                  {portfolio.symbols.map((t) => (
+                    <li
+                      key={t}
+                      className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
                     >
-                      remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </aside>
-          <PortfolioNewsPanel tickers={portfolio.symbols} ready={portfolio.ready} />
-        </div>
-        )
-      )}
+                      <span className="font-medium">{t}</span>
+                      <button
+                        type="button"
+                        onClick={() => portfolio.remove(t)}
+                        className="text-[11px] text-slate-500 transition-colors hover:text-rose-400"
+                      >
+                        remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </aside>
+            <PortfolioNewsPanel tickers={portfolio.symbols} ready={portfolio.ready} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  )
+}
+
+function TopNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+  const items: { id: Tab; label: string; color: string }[] = [
+    { id: "home", label: "Home", color: "emerald" },
+    { id: "terminal", label: "Chart", color: "emerald" },
+    { id: "news", label: "Portfolio", color: "violet" },
+    { id: "learn", label: "Learn", color: "amber" },
+  ]
+  return (
+    <header className="sticky top-0 z-40 flex shrink-0 flex-wrap items-center gap-3 border-b border-white/5 bg-black/40 px-6 py-3 backdrop-blur-xl">
+      <button
+        type="button"
+        onClick={() => onTab("home")}
+        className="flex items-center gap-2"
+      >
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg brand-gradient-bg font-bold text-white">
+          M
+        </div>
+        <div className="text-sm font-semibold tracking-tight text-white">
+          Market<span className="brand-gradient-text">Lens</span>
+        </div>
+      </button>
+      <nav className="ml-6 flex gap-1">
+        {items.map((it) => (
+          <button
+            key={it.id}
+            type="button"
+            onClick={() => onTab(it.id)}
+            className={`relative rounded-full px-4 py-1.5 text-[12px] font-medium transition-all ${
+              tab === it.id ? "text-white" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {tab === it.id ? (
+              <motion.span
+                layoutId="nav-pill"
+                className="absolute inset-0 rounded-full bg-white/10"
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              />
+            ) : null}
+            <span className="relative">{it.label}</span>
+          </button>
+        ))}
+      </nav>
+    </header>
+  )
+}
+
+function EmptyFeed() {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center"
+    >
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400/20 to-violet-400/20 text-2xl">
+        ✨
+      </div>
+      <div>
+        <div className="text-sm font-semibold text-white">Drag across the chart</div>
+        <div className="mt-1 text-[12px] text-slate-400">
+          Or tap an auto-detected moment to see why that window moved.
+        </div>
+      </div>
+    </motion.div>
   )
 }

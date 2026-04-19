@@ -37,7 +37,27 @@ export type ChartPoint = {
   price: number
   /** Bar time (seconds since epoch) when data comes from Yahoo — used for explain date strings. */
   ts?: number
+  /** OHLCV when available (live sources populate these). */
+  open?: number
+  high?: number
+  low?: number
+  close?: number
+  volume?: number
 }
+
+export type ChartEvent = {
+  id: string
+  index: number
+  /** Contiguous window anchoring this event. */
+  startIndex: number
+  endIndex: number
+  kind: "drop" | "spike" | "volatility" | "volume" | "reversal"
+  magnitudePct: number
+  label: string
+  emoji: string
+}
+
+export type ExplainMode = "beginner" | "analyst"
 
 export type ChartSelectionRange = {
   ticker: string

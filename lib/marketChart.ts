@@ -92,11 +92,19 @@ async function fetchYahooFinance2Series(symbol: string, timeframe: ChartTimefram
     if (close == null || Number.isNaN(Number(close))) continue
     const d = q.date instanceof Date ? q.date : new Date(q.date as string)
     const ts = Math.floor(d.getTime() / 1000)
+    const r2 = (x: number | null | undefined) =>
+      x == null || Number.isNaN(Number(x)) ? undefined : Math.round(Number(x) * 100) / 100
     pts.push({
       time: idx++,
       label: formatAxisLabel(ts, timeframe),
       price: Math.round(Number(close) * 100) / 100,
       ts,
+      open: r2(q.open as number | null | undefined),
+      high: r2(q.high as number | null | undefined),
+      low: r2(q.low as number | null | undefined),
+      close: r2(Number(close)),
+      volume:
+        typeof q.volume === "number" && Number.isFinite(q.volume) ? q.volume : undefined,
     })
   }
 

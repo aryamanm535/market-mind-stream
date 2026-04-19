@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Market Mind Stream",
-  description: "AI-powered financial reasoning terminal — live desk thoughts and chart explanations.",
+  title: "MarketLens — Understand why the market moves",
+  description:
+    "An AI-powered market learning platform. Explore charts, get real-time explanations for price moves, and learn markets through interactive prediction games.",
 };
 
 export default function RootLayout({
@@ -27,7 +28,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#030306] text-zinc-100">{children}</body>
+      <body className="min-h-full flex flex-col text-slate-100">{children}</body>
     </html>
   );
 }

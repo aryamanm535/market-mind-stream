@@ -1,14 +1,18 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { AnimatePresence, motion } from "framer-motion"
 import {
   LineChart,
   Line,
+  Area,
+  AreaChart,
   XAxis,
   YAxis,
   ResponsiveContainer,
   ReferenceArea,
   ReferenceLine,
+  ReferenceDot,
   CartesianGrid,
   useOffset,
   usePlotArea,
@@ -17,14 +21,17 @@ import {
   type ChartOffset,
 } from "recharts"
 import { explainDateLabel } from "@/lib/chartDateLabels"
-import type { ChartPoint, ChartSelectionRange, ChartTimeframe } from "@/lib/types"
+import { detectChartEvents } from "@/lib/events"
+import type {
+  ChartEvent,
+  ChartPoint,
+  ChartSelectionRange,
+  ChartTimeframe,
+} from "@/lib/types"
 
-/** Fallback until Recharts reports real plot offsets (matches margin + default Y-axis width ~52px). */
 const PLOT_FALLBACK = { L: 52, R: 22, T: 18, B: 42 }
-
-/** Inner plot height (outer box is this + p-3 vertical padding). Keeps ResponsiveContainer > 0. */
-const CHART_INNER_H = 356
-const CHART_MIN_H = 240
+const CHART_INNER_H = 420
+const CHART_MIN_H = 300
 
 function buildSelection(
   ticker: string,
@@ -94,6 +101,20 @@ function PlotOffsetSync({ onOffset }: { onOffset: (o: ChartOffset) => void }) {
   return null
 }
 
+function formatPx(v: number): string {
+  const a = Math.abs(v)
+  const d = a < 1 ? 4 : a < 10 ? 3 : 2
+  return v.toFixed(d)
+}
+
+function formatVol(v: number | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—"
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`
+  return String(v)
+}
+
 function ChartCrosshairG({
   data,
   hoverIndex,
@@ -121,8 +142,6 @@ function ChartCrosshairG({
   const top = area.y
   const bottom = area.y + area.height
   const xLine = Math.max(left, Math.min(right, rawX))
-  const priceStr = formatPx(p.price)
-  const timeStr = p.label
   return (
     <g className="pointer-events-none" aria-hidden>
       <line
@@ -131,54 +150,13 @@ function ChartCrosshairG({
         y1={top}
         y2={bottom}
         stroke="#64748b"
-        strokeOpacity={0.55}
-        strokeDasharray="4 6"
+        strokeOpacity={0.4}
+        strokeDasharray="3 6"
       />
-      <line
-        x1={left}
-        x2={right}
-        y1={yPix}
-        y2={yPix}
-        stroke="#64748b"
-        strokeOpacity={0.45}
-        strokeDasharray="4 6"
-      />
-      <g transform={`translate(${right - 6}, ${yPix})`}>
-        <rect x={-76} y={-11} width={76} height={22} rx={4} fill="#070b12" stroke="#22c55e" strokeOpacity={0.55} />
-        <text
-          x={-8}
-          y={4}
-          textAnchor="end"
-          fill="#86efac"
-          fontSize={12}
-          fontWeight={600}
-          fontFamily="var(--font-geist-mono), ui-monospace, monospace"
-        >
-          {priceStr}
-        </text>
-      </g>
-      <g transform={`translate(${xLine}, ${bottom + 14})`}>
-        <rect x={-42} y={-10} width={84} height={20} rx={4} fill="#070b12" stroke="#334155" strokeOpacity={0.65} />
-        <text
-          x={0}
-          y={4}
-          textAnchor="middle"
-          fill="#cbd5e1"
-          fontSize={11}
-          fontWeight={600}
-          fontFamily="var(--font-geist-mono), ui-monospace, monospace"
-        >
-          {timeStr}
-        </text>
-      </g>
+      <circle cx={xLine} cy={yPix} r={5} fill="#10b981" fillOpacity={0.25} />
+      <circle cx={xLine} cy={yPix} r={3} fill="#34d399" />
     </g>
   )
-}
-
-function formatPx(v: number): string {
-  const a = Math.abs(v)
-  const d = a < 1 ? 4 : a < 10 ? 3 : 2
-  return v.toFixed(d)
 }
 
 type Props = {
@@ -188,16 +166,23 @@ type Props = {
   mode: "explain" | "draw"
   onSelect: (range: ChartSelectionRange) => void
   busy?: boolean
+  /** Currently loading or null. */
+  activeEventId?: string | null
 }
 
 type DrawLine = { id: string; a: number; b: number }
+type HoverData = {
+  idx: number
+  xPx: number
+  yPx: number
+  containerRect: DOMRect
+}
 
 function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export default function StockChart({ data, ticker, timeframe, mode, onSelect, busy }: Props) {
-  /** Plot box (matches drag overlay) — not the padded outer wrapper. */
+export default function StockChart({ data, ticker, timeframe, mode, onSelect, busy, activeEventId }: Props) {
   const plotRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ a: number; b: number } | null>(null)
   const [drag, setDrag] = useState<{ a: number; b: number } | null>(null)
@@ -205,11 +190,12 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
   const [drawLines, setDrawLines] = useState<DrawLine[]>([])
   const [drawStart, setDrawStart] = useState<number | null>(null)
   const [drawHover, setDrawHover] = useState<number | null>(null)
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
-  const [hoverXPx, setHoverXPx] = useState<number | null>(null)
+  const [hover, setHover] = useState<HoverData | null>(null)
   const [plotOffset, setPlotOffset] = useState<ChartOffset | null>(null)
 
   const onPlotOffset = useCallback((o: ChartOffset) => setPlotOffset(o), [])
+
+  const events = useMemo(() => detectChartEvents(data, timeframe, 5), [data, timeframe])
 
   useEffect(() => {
     setCommitted(null)
@@ -218,19 +204,26 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
     setDrawLines([])
     setDrawStart(null)
     setDrawHover(null)
-    setHoverIndex(null)
-    setHoverXPx(null)
+    setHover(null)
   }, [data, ticker, timeframe])
+
+  const commitRange = useCallback(
+    (startIndex: number, endIndex: number) => {
+      if (data.length === 0) return
+      const sel = buildSelection(ticker, timeframe, data, startIndex, endIndex)
+      setCommitted({ lo: sel.startIndex, hi: sel.endIndex })
+      onSelect(sel)
+    },
+    [data, onSelect, ticker, timeframe]
+  )
 
   const finishDrag = useCallback(() => {
     const d = dragRef.current
     if (!d || data.length === 0) return
     dragRef.current = null
     setDrag(null)
-    const sel = buildSelection(ticker, timeframe, data, d.a, d.b)
-    setCommitted({ lo: sel.startIndex, hi: sel.endIndex })
-    onSelect(sel)
-  }, [data, onSelect, ticker, timeframe])
+    commitRange(d.a, d.b)
+  }, [data, commitRange])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (busy || data.length === 0) return
@@ -271,13 +264,31 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
     if (!el) return
     const rect = el.getBoundingClientRect()
     const i = xToIndex(e.clientX, rect, data.length, plotOffset)
-    setHoverIndex(i)
     const insetL = plotOffset?.left ?? PLOT_FALLBACK.L
     const insetR = plotOffset?.right ?? PLOT_FALLBACK.R
     const plotLeft = rect.left + insetL
     const plotRight = rect.right - insetR
     const xClamped = Math.max(plotLeft, Math.min(plotRight, e.clientX))
-    setHoverXPx(xClamped - rect.left)
+    // Compute Y pixel for hover tooltip positioning.
+    const p = data[i]
+    const priceMin = Math.min(...data.map((d) => d.price))
+    const priceMax = Math.max(...data.map((d) => d.price))
+    const span = priceMax - priceMin || 1
+    const pad = span * 0.06
+    const yMin = priceMin - pad
+    const yMax = priceMax + pad
+    const yRange = yMax - yMin || 1
+    const plotTop = rect.top + (plotOffset?.top ?? PLOT_FALLBACK.T)
+    const plotBottom = rect.bottom - (plotOffset?.bottom ?? PLOT_FALLBACK.B)
+    const plotH = plotBottom - plotTop
+    const yPix = p ? plotTop + (1 - (p.price - yMin) / yRange) * plotH : 0
+
+    setHover({
+      idx: i,
+      xPx: xClamped - rect.left,
+      yPx: yPix - rect.top,
+      containerRect: rect,
+    })
     if (mode === "draw") {
       if (drawStart != null) setDrawHover(i)
       return
@@ -314,20 +325,44 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
   const yMin = dMin - pad
   const yMax = dMax + pad
 
+  const first = data[0]?.price ?? 0
+  const last = data[data.length - 1]?.price ?? 0
+  const trend = last >= first ? "up" : "down"
+  const trendColor = trend === "up" ? "#10b981" : "#f43f5e"
+  const trendGlow = trend === "up" ? "rgba(16,185,129,0.35)" : "rgba(244,63,94,0.35)"
+
+  const hoverPoint = hover ? data[hover.idx] : null
+  const prevPoint = hover && hover.idx > 0 ? data[hover.idx - 1] : null
+  const barPct =
+    hoverPoint && prevPoint && prevPoint.price > 0
+      ? ((hoverPoint.price - prevPoint.price) / prevPoint.price) * 100
+      : 0
+  const sessionPct =
+    hoverPoint && first > 0 ? ((hoverPoint.price - first) / first) * 100 : 0
+
   return (
     <div className="flex flex-col gap-3">
       <div
         role="application"
         aria-label={`Price chart (${timeframe}) — ${mode === "draw" ? "draw mode" : "drag-select explain mode"}`}
-        className="relative w-full min-w-0 rounded-lg border border-zinc-800/80 bg-[#070b12] p-3 shadow-[inset_0_0_0_1px_rgba(34,197,94,0.06)]"
+        className="relative w-full min-w-0 overflow-hidden rounded-3xl border border-white/5 bg-gradient-to-b from-[#0d1220] to-[#0a0e1a] p-4 shadow-[0_20px_60px_-20px_rgba(16,185,129,0.25)]"
       >
-        {busy ? (
-          <div className="absolute inset-0 z-20 flex cursor-wait items-center justify-center rounded-md bg-black/55 p-3">
-            <span className="rounded border border-emerald-500/40 bg-zinc-950/95 px-3 py-1.5 font-mono text-xs text-emerald-300">
-              Reasoning…
-            </span>
-          </div>
-        ) : null}
+        <AnimatePresence>
+          {busy ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-20 flex cursor-wait items-center justify-center rounded-3xl bg-black/55 backdrop-blur-sm"
+            >
+              <div className="flex items-center gap-3 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-5 py-2.5 text-sm font-medium text-emerald-100">
+                <span className="inline-block h-2 w-2 animate-ping rounded-full bg-emerald-400" />
+                Reasoning through this move…
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
         <div
           ref={plotRef}
           className="relative w-full min-w-0"
@@ -342,7 +377,7 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
                   setDrawStart(null)
                   setDrawHover(null)
                 }}
-                className="rounded-md border border-zinc-700 bg-zinc-950/60 px-2.5 py-1.5 font-mono text-[11px] text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-200"
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] text-slate-200 backdrop-blur hover:border-emerald-400/40 hover:text-emerald-200"
               >
                 Clear lines
               </button>
@@ -356,120 +391,339 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
             initialDimension={{ width: 800, height: CHART_INNER_H }}
             debounce={32}
           >
-            <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 20 }}>
+            <AreaChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
               <PlotOffsetSync onOffset={onPlotOffset} />
-            <CartesianGrid strokeDasharray="3 6" stroke="#1f2937" vertical={false} />
-            <XAxis
-              dataKey="time"
-              interval={data.length > 18 ? 2 : data.length > 12 ? 1 : 0}
-              tick={{ fill: "#64748b", fontSize: 10, fontFamily: "var(--font-geist-mono)" }}
-              tickLine={false}
-              axisLine={{ stroke: "#27272a" }}
-              tickFormatter={(v: number) => data[v]?.label ?? String(v)}
-            />
-            <YAxis
+              <defs>
+                <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={trendColor} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={trendColor} stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="priceStroke" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor={trendColor} stopOpacity={0.9} />
+                  <stop offset="100%" stopColor={trendColor} stopOpacity={1} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="2 8" stroke="rgba(148,163,184,0.09)" vertical={false} />
+              <XAxis
+                dataKey="time"
+                interval={data.length > 18 ? 2 : data.length > 12 ? 1 : 0}
+                tick={{ fill: "#64748b", fontSize: 10, fontFamily: "var(--font-geist-mono)" }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v: number) => data[v]?.label ?? String(v)}
+              />
+              <YAxis
                 domain={[yMin, yMax]}
                 tick={{ fill: "#64748b", fontSize: 11, fontFamily: "var(--font-geist-mono)" }}
                 tickFormatter={(v: number) => formatPx(v)}
                 tickLine={false}
-                axisLine={{ stroke: "#27272a" }}
+                axisLine={false}
                 width={52}
-            />
-            {data.length > 0 ? (
-              <ReferenceArea
-                x1={x0}
-                x2={x1}
-                stroke="#22c55e"
-                strokeOpacity={drag ? 0.55 : 0.35}
-                fill="#22c55e"
-                fillOpacity={drag ? 0.12 : 0.06}
+                orientation="right"
               />
-            ) : null}
-            <Line
-              type="linear"
-              dataKey="price"
-              stroke="#4ade80"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4, fill: "#86efac", stroke: "#14532d" }}
-            />
-
-            {drawLines.map((ln) => {
-              const a = data[Math.max(0, Math.min(data.length - 1, ln.a))]!
-              const b = data[Math.max(0, Math.min(data.length - 1, ln.b))]!
-              const pct = a.price !== 0 ? ((b.price - a.price) / a.price) * 100 : 0
-              return (
-                <ReferenceLine
-                  key={ln.id}
-                  segment={[
-                    { x: a.time, y: a.price },
-                    { x: b.time, y: b.price },
-                  ]}
-                  stroke="#38bdf8"
-                  strokeWidth={2}
-                  strokeOpacity={0.75}
-                  ifOverflow="discard"
-                  label={{
-                    value: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`,
-                    position: "insideTopRight",
-                    fill: "#7dd3fc",
-                    fontSize: 11,
-                  }}
+              {data.length > 0 && (committed || drag) ? (
+                <ReferenceArea
+                  x1={x0}
+                  x2={x1}
+                  stroke={trendColor}
+                  strokeOpacity={drag ? 0.65 : 0.35}
+                  fill={trendColor}
+                  fillOpacity={drag ? 0.12 : 0.06}
+                  ifOverflow="visible"
                 />
+              ) : null}
+              <Area
+                type="monotone"
+                dataKey="price"
+                stroke="url(#priceStroke)"
+                strokeWidth={2.5}
+                fill="url(#priceFill)"
+                dot={false}
+                activeDot={false}
+                isAnimationActive
+                animationDuration={700}
+              />
+
+              {events.map((ev) => {
+                const p = data[ev.index]
+                if (!p) return null
+                const color =
+                  ev.kind === "drop"
+                    ? "#f43f5e"
+                    : ev.kind === "spike"
+                    ? "#10b981"
+                    : ev.kind === "volume"
+                    ? "#8b5cf6"
+                    : "#f59e0b"
+                const isActive = activeEventId === ev.id
+                return (
+                  <ReferenceDot
+                    key={ev.id}
+                    x={p.time}
+                    y={p.price}
+                    r={isActive ? 9 : 6}
+                    fill={color}
+                    fillOpacity={0.85}
+                    stroke="#0a0e1a"
+                    strokeWidth={2}
+                    ifOverflow="visible"
+                  />
+                )
+              })}
+
+              {drawLines.map((ln) => {
+                const a = data[Math.max(0, Math.min(data.length - 1, ln.a))]!
+                const b = data[Math.max(0, Math.min(data.length - 1, ln.b))]!
+                const pct = a.price !== 0 ? ((b.price - a.price) / a.price) * 100 : 0
+                return (
+                  <ReferenceLine
+                    key={ln.id}
+                    segment={[
+                      { x: a.time, y: a.price },
+                      { x: b.time, y: b.price },
+                    ]}
+                    stroke="#8b5cf6"
+                    strokeWidth={2}
+                    strokeOpacity={0.8}
+                    ifOverflow="discard"
+                    label={{
+                      value: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`,
+                      position: "insideTopRight",
+                      fill: "#c4b5fd",
+                      fontSize: 11,
+                    }}
+                  />
+                )
+              })}
+              {mode === "draw" && drawStart != null && drawHover != null ? (() => {
+                const a = data[Math.max(0, Math.min(data.length - 1, drawStart))]!
+                const b = data[Math.max(0, Math.min(data.length - 1, drawHover))]!
+                return (
+                  <ReferenceLine
+                    segment={[
+                      { x: a.time, y: a.price },
+                      { x: b.time, y: b.price },
+                    ]}
+                    stroke="#a78bfa"
+                    strokeWidth={2}
+                    strokeOpacity={0.4}
+                    strokeDasharray="6 6"
+                    ifOverflow="discard"
+                  />
+                )
+              })() : null}
+              <ChartCrosshairG
+                data={data}
+                hoverIndex={hover?.idx ?? null}
+                hoverXPx={hover?.xPx ?? null}
+                show={Boolean(!busy && hover && data[hover.idx])}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+
+          {/* Event marker click overlays (SVG dots can't easily capture clicks through the overlay layer) */}
+          <div className="pointer-events-none absolute inset-0 z-10">
+            {events.map((ev) => {
+              const p = data[ev.index]
+              if (!p || !plotOffset) return null
+              const rect = plotRef.current?.getBoundingClientRect()
+              if (!rect) return null
+              const plotLeft = plotOffset.left ?? PLOT_FALLBACK.L
+              const plotRight = (rect.width ?? 0) - (plotOffset.right ?? PLOT_FALLBACK.R)
+              const w = Math.max(1, plotRight - plotLeft)
+              const xPx = plotLeft + (data.length > 1 ? (ev.index / (data.length - 1)) * w : 0)
+              const plotTop = plotOffset.top ?? PLOT_FALLBACK.T
+              const plotBottom = (rect.height ?? 0) - (plotOffset.bottom ?? PLOT_FALLBACK.B)
+              const plotH = plotBottom - plotTop
+              const yRange = yMax - yMin || 1
+              const yPx = plotTop + (1 - (p.price - yMin) / yRange) * plotH
+              const color =
+                ev.kind === "drop"
+                  ? "#f43f5e"
+                  : ev.kind === "spike"
+                  ? "#10b981"
+                  : ev.kind === "volume"
+                  ? "#8b5cf6"
+                  : "#f59e0b"
+              return (
+                <button
+                  key={ev.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    commitRange(ev.startIndex, ev.endIndex)
+                  }}
+                  title={`${ev.label} · click to explain`}
+                  style={{
+                    position: "absolute",
+                    left: xPx - 14,
+                    top: yPx - 14,
+                    width: 28,
+                    height: 28,
+                  }}
+                  className="pointer-events-auto rounded-full transition-transform hover:scale-125"
+                >
+                  <span
+                    className="pulse-glow block h-full w-full rounded-full"
+                    style={{
+                      background: color,
+                      opacity: 0.25,
+                    }}
+                  />
+                </button>
               )
             })}
-            {mode === "draw" && drawStart != null && drawHover != null ? (() => {
-              const a = data[Math.max(0, Math.min(data.length - 1, drawStart))]!
-              const b = data[Math.max(0, Math.min(data.length - 1, drawHover))]!
-              return (
-                <ReferenceLine
-                  segment={[
-                    { x: a.time, y: a.price },
-                    { x: b.time, y: b.price },
-                  ]}
-                  stroke="#38bdf8"
-                  strokeWidth={2}
-                  strokeOpacity={0.35}
-                  strokeDasharray="6 6"
-                  ifOverflow="discard"
-                />
-              )
-            })() : null}
-            <ChartCrosshairG
-              data={data}
-              hoverIndex={hoverIndex}
-              hoverXPx={hoverXPx}
-              show={Boolean(!busy && hoverIndex != null && data[hoverIndex])}
-            />
-            </LineChart>
-          </ResponsiveContainer>
+          </div>
+
           {!busy ? (
             <div
-              className="absolute inset-0 z-10 cursor-crosshair touch-none"
+              className="absolute inset-0 z-[5] cursor-crosshair touch-none"
               style={{ background: "transparent" }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerEnd}
               onPointerCancel={onPointerEnd}
-              onPointerLeave={() => {
-                setHoverIndex(null)
-                setHoverXPx(null)
-              }}
+              onPointerLeave={() => setHover(null)}
             />
           ) : null}
+
+          {/* Floating OHLCV Hover Card */}
+          <AnimatePresence>
+            {hover && hoverPoint && !busy ? (
+              <motion.div
+                key="hover-card"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.12 }}
+                className="pointer-events-none absolute z-30"
+                style={{
+                  left: Math.min(
+                    Math.max(10, hover.xPx + 16),
+                    (hover.containerRect.width ?? 600) - 220
+                  ),
+                  top: Math.max(10, hover.yPx - 110),
+                }}
+              >
+                <div className="min-w-[200px] rounded-2xl border border-white/10 bg-[#0a0e1a]/95 p-3 shadow-2xl backdrop-blur-xl">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
+                      {hoverPoint.label}
+                    </div>
+                    <div
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        barPct >= 0
+                          ? "bg-emerald-400/15 text-emerald-300"
+                          : "bg-rose-400/15 text-rose-300"
+                      }`}
+                    >
+                      {barPct >= 0 ? "+" : ""}
+                      {barPct.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <div className="font-mono text-2xl font-semibold text-white">
+                      ${formatPx(hoverPoint.price)}
+                    </div>
+                    <div
+                      className={`font-mono text-[11px] ${
+                        sessionPct >= 0 ? "text-emerald-400" : "text-rose-400"
+                      }`}
+                    >
+                      {sessionPct >= 0 ? "+" : ""}
+                      {sessionPct.toFixed(2)}% session
+                    </div>
+                  </div>
+                  {hoverPoint.open != null ||
+                  hoverPoint.high != null ||
+                  hoverPoint.low != null ? (
+                    <div className="mt-2 grid grid-cols-4 gap-1 border-t border-white/5 pt-2 text-center">
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-slate-500">O</div>
+                        <div className="font-mono text-[11px] text-slate-200">
+                          {hoverPoint.open != null ? formatPx(hoverPoint.open) : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-slate-500">H</div>
+                        <div className="font-mono text-[11px] text-emerald-300">
+                          {hoverPoint.high != null ? formatPx(hoverPoint.high) : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-slate-500">L</div>
+                        <div className="font-mono text-[11px] text-rose-300">
+                          {hoverPoint.low != null ? formatPx(hoverPoint.low) : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-slate-500">C</div>
+                        <div className="font-mono text-[11px] text-slate-200">
+                          {hoverPoint.close != null ? formatPx(hoverPoint.close) : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {hoverPoint.volume != null ? (
+                    <div className="mt-2 flex items-center justify-between border-t border-white/5 pt-2">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                        Volume
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-200">
+                        {formatVol(hoverPoint.volume)}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
+
+        {/* Event legend (if any) */}
+        {events.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/5 pt-3">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">
+              Auto-detected moments
+            </span>
+            {events.map((ev) => {
+              const isDrop = ev.kind === "drop"
+              const isSpike = ev.kind === "spike"
+              return (
+                <button
+                  key={ev.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => commitRange(ev.startIndex, ev.endIndex)}
+                  className={`group flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-all hover:scale-105 ${
+                    isDrop
+                      ? "border-rose-400/30 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+                      : isSpike
+                      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                      : "border-violet-400/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20"
+                  }`}
+                >
+                  <span className="font-semibold">{ev.emoji}</span>
+                  <span>{ev.label}</span>
+                  <span className="text-[9px] opacity-70">· {data[ev.index]?.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
       </div>
-      <p className="font-mono text-[11px] leading-relaxed text-zinc-500">
+      <p className="px-1 text-[12px] leading-relaxed text-slate-400">
         {mode === "draw" ? (
           <>
-            <span className="text-sky-300/90">Click two points</span> to draw a comparison line. Use
-            the percent label to compare moves.
+            <span className="text-violet-300">Click two points</span> to draw a comparison line. The
+            percent label shows the move between them.
           </>
         ) : (
           <>
-            <span className="text-emerald-400/90">Click and drag</span> across the price line to pick
-            a session window. On release, the analyst explains{" "}
-            <span className="text-zinc-300">why price rose or fell</span> in that range.
+            <span className="text-emerald-300">Drag</span> across the chart to ask the AI to explain
+            that window — or{" "}
+            <span className="text-emerald-300">click a highlighted moment</span> above.
           </>
         )}
       </p>

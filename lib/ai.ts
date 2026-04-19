@@ -567,9 +567,15 @@ export async function generateRegionExplanation(
     startLabelFull: string
     endLabelFull: string
     timeframe: ChartTimeframe
+    mode?: "beginner" | "analyst"
   },
   articles: NewsArticle[] = []
 ): Promise<MarketThought> {
+  const mode = stats.mode === "analyst" ? "analyst" : "beginner"
+  const modeBlurb =
+    mode === "beginner"
+      ? "MODE: beginner. Plain English, short sentences, avoid jargon (or explain it inline in parentheses). Aim to make a curious college student 'get it' in one read. Use concrete analogies when helpful."
+      : "MODE: analyst. Assume intermediate market literacy. Use precise financial framing (flows, positioning, multiple compression, rates sensitivity, sector rotation). Keep it crisp but richer."
   const dir =
     stats.pctChange > 0.01 ? "up" : stats.pctChange < -0.01 ? "down" : "sideways"
   const horizon = TIMEFRAME_BLURB[stats.timeframe] ?? "selected horizon"
@@ -585,7 +591,9 @@ export async function generateRegionExplanation(
           .join("\n")
       : "No recent article list was available."
 
-  const prompt = `Horizon: ${stats.timeframe} (${horizon}). Stock ${ticker}, window ${win} (axis: ${
+  const prompt = `${modeBlurb}
+
+Horizon: ${stats.timeframe} (${horizon}). Stock ${ticker}, window ${win} (axis: ${
     stats.startLabel
   }–${stats.endLabel}), move ${stats.pctChange >= 0 ? "+" : ""}${stats.pctChange.toFixed(
     2

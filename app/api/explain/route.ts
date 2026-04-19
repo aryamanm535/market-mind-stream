@@ -7,6 +7,7 @@ const ALLOW_TF = new Set<ChartTimeframe>(["1D", "1W", "1M", "3M", "1Y", "5Y"])
 type ExplainBody = {
   stock?: string
   range?: Partial<ChartSelectionRange>
+  mode?: "beginner" | "analyst"
 }
 
 export async function POST(req: Request) {
@@ -51,6 +52,8 @@ export async function POST(req: Request) {
 
   const articles = await fetchGoogleNewsArticles(stock, 5)
 
+  const mode = body.mode === "analyst" ? "analyst" : "beginner"
+
   const result = await generateRegionExplanation(stock, rangeSummary, {
     pctChange: r.pctChange,
     startLabel: r.startLabel,
@@ -58,6 +61,7 @@ export async function POST(req: Request) {
     startLabelFull: startFull || String(r.startLabel),
     endLabelFull: endFull || String(r.endLabel),
     timeframe,
+    mode,
   }, articles)
 
   return Response.json(result)
