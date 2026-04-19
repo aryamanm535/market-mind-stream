@@ -224,6 +224,65 @@ function normTopic(raw: unknown): LearnTopic {
   return "Macro"
 }
 
+function synthesizeFallbackQuiz(
+  thought: MarketThought,
+  pack: LearnPack
+): LearnPack["quiz"] {
+  const out: LearnPack["quiz"] = []
+  const factors = thought.topFactors ?? []
+  if (factors.length >= 2) {
+    const choices = factors.map((f) => f.factor)
+    while (choices.length < 4) choices.push("Unrelated noise")
+    out.push({
+      id: "fq-driver",
+      topic: pack.topics[0] ?? "Macro",
+      prompt: `What looks like the primary driver of ${thought.ticker}'s move in ${
+        pack.rangeLabel
+      }?`,
+      choices: choices.slice(0, 4),
+      correctIndex: 0,
+      explanation: factors[0]?.evidence ?? "",
+    })
+  }
+  const terms = pack.terms.slice(0, 3)
+  for (let i = 0; i < terms.length && out.length < 4; i++) {
+    const t = terms[i]!
+    const distractors = pack.terms
+      .filter((x) => x.id !== t.id)
+      .slice(0, 3)
+      .map((x) => x.definition || x.term)
+    const choices = [t.definition, ...distractors].filter(Boolean).slice(0, 4)
+    while (choices.length < 4) choices.push("None of the above")
+    out.push({
+      id: `fq-term-${i}`,
+      topic: t.topic,
+      prompt: `Which best describes "${t.term}"?`,
+      choices,
+      correctIndex: 0,
+      explanation: t.example ?? t.definition,
+    })
+  }
+  if (out.length === 0) {
+    out.push({
+      id: "fq-direction",
+      topic: "Technicals",
+      prompt: `Over ${pack.rangeLabel}, did ${thought.ticker} trend up, down, or sideways?`,
+      choices: ["Up", "Down", "Sideways", "Can't tell"],
+      correctIndex:
+        (thought.thought.toLowerCase().includes("gain") ||
+        thought.thought.toLowerCase().includes("rally") ||
+        thought.thought.toLowerCase().includes("rose"))
+          ? 0
+          : thought.thought.toLowerCase().includes("drop") ||
+            thought.thought.toLowerCase().includes("fell")
+          ? 1
+          : 2,
+      explanation: thought.thought,
+    })
+  }
+  return out
+}
+
 function coerceLearnPack(raw: unknown, timeframe: ChartTimeframe, rangeLabel: string): LearnPack | undefined {
   if (!raw || typeof raw !== "object") return undefined
   const o = raw as Record<string, unknown>
@@ -648,7 +707,7 @@ Use only valid JSON strings (escape quotes inside text). No markdown.
       callLlm(prompt, {
         timeoutMs: EXPLAIN_BUDGET_MS,
         maxRetries: 0,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 2048,
         temperature: 0.35,
       })
     )
@@ -662,7 +721,23 @@ Use only valid JSON strings (escape quotes inside text). No markdown.
       thought.sources = articles.slice(0, 3).map((a) => ({ title: a.title, url: a.url }))
     }
     const p = parsed as Record<string, unknown>
-    thought.learn = coerceLearnPack(p.learn, stats.timeframe, thought.regionLabel)
+    thought.learn = coerceLearnPack(p.learn, stats.timeframe, thought.regionLabel) ?? {
+      rangeLabel: thought.regionLabel ?? win,
+      timeframe: stats.timeframe,
+      topics: ["Macro", "Technicals", "Sentiment"],
+      terms: [],
+      quiz: [],
+      driverGame: {
+        prompt: "Pick the best driver.",
+        choices: TOPICS.slice(0, 4).map((t) => ({ label: t, topic: t })),
+        correctIndex: 0,
+        explanation: "",
+      },
+      tradeIdea: { direction: "LONG", thesis: "", risk: "", invalidation: "" },
+    }
+    if (thought.learn.quiz.length === 0) {
+      thought.learn.quiz = synthesizeFallbackQuiz(thought, thought.learn)
+    }
     return thought
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error"
@@ -739,53 +814,24 @@ export async function generatePortfolioNewsDigest(
   tickers: string[],
   articles: NewsArticle[]
 ): Promise<PortfolioNewsItem[]> {
-  const list = [...new Set(tickers.map((t) => t.trim().toUpperCase()).filter(Boolean))].slice(0, 24)
+  const list = [...new Set(tickers.map((t) => t.trim().toUpperCase()).filter(Boolean))].slice(0, 10)
   if (list.length === 0) return []
   if (articles.length === 0) return []
 
   const now = Date.now()
   const articleLines = articles
-    .slice(0, 36)
-    .map(
-      (a, i) =>
-        `${i + 1}. [${a.id}] ${a.title} | ${a.publisher} | ${new Date(a.publishedAt).toISOString()} | ${a.url}`
-    )
+    .slice(0, 18)
+    .map((a, i) => `${i + 1}. [${a.id}] ${a.title} | ${a.publisher} | ${a.url}`)
     .join("\n")
 
-  const prompt = `Portfolio tickers: ${list.join(", ")}
-Below are real article candidates for these symbols. Build 8-10 ranked portfolio news cards from them.
-
-Article candidates:
+  const prompt = `Tickers: ${list.join(",")}
+Articles:
 ${articleLines}
 
-Instructions:
-- Use ONLY the provided articles. Do not invent links or publishers.
-- Each output item must map to one concrete article from the list.
-- summary must be specific: 2 sentences max, with catalyst + why it matters for the ticker/book.
-- impactScore: 0-100 based on how important it is to this portfolio now.
-- impactLabel: high|medium|low.
-- matchedTickers: subset of portfolio tickers only.
-- Keep exact article URL in link and include sourceLinks with that same article.
-- Sort by impactScore descending.
+Rank 8 cards from these articles only. Each maps to one article; use its exact URL. summary: 1-2 sentences, catalyst + book impact. impactScore 0-100, impactLabel high|medium|low. matchedTickers ⊆ tickers. Sort by impactScore desc.
 
-Return JSON:
-{
-  "items": [
-    {
-      "id": "article-id",
-      "title": "exact or lightly cleaned article title",
-      "summary": "specific 1-2 sentence summary",
-      "publisher": "publisher",
-      "publishedAt": ${now},
-      "link": "https://exact-article-url",
-      "sourceLinks": [{"title":"publisher","url":"https://exact-article-url"}],
-      "ticker": "AAPL",
-      "matchedTickers": ["AAPL"],
-      "impactScore": 78,
-      "impactLabel": "high"
-    }
-  ]
-}`
+JSON:
+{"items":[{"id":"","title":"","summary":"","publisher":"","publishedAt":${now},"link":"","sourceLinks":[{"title":"","url":""}],"ticker":"","matchedTickers":[""],"impactScore":0,"impactLabel":"high"}]}`
 
   try {
     const text = await withLlmQueue(() =>

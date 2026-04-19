@@ -20,7 +20,7 @@ function parseTickers(raw: string | null): string[] {
     .split(/[,\s]+/)
     .map((s) => s.trim().toUpperCase())
     .filter((s) => /^[A-Z0-9.\-]{1,20}$/.test(s))
-    .slice(0, 24)
+    .slice(0, 10)
 }
 
 export async function GET(req: Request) {

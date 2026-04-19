@@ -38,10 +38,6 @@ function boxToDelayDays(box: FlashcardState["box"]) {
   return 14
 }
 
-function clamp01(n: number) {
-  return Math.max(0, Math.min(1, n))
-}
-
 export function useLearningStore() {
   const [ready, setReady] = useState(false)
   const [store, setStore] = useState<LearningStore>({ terms: {}, cards: {}, attempts: [] })
@@ -121,32 +117,22 @@ export function useLearningStore() {
   }, [store.cards])
 
   const mastery: TopicMastery[] = useMemo(() => {
-    const byTopic: Record<string, { score: number; attempts: number; correct: number; streak: number }> = {}
-    // Initialize known topics as they appear
+    const byTopic: Record<string, { attempts: number; correct: number }> = {}
     for (const a of store.attempts.slice(0, 300)) {
       const key = a.topic
-      if (!byTopic[key]) byTopic[key] = { score: 50, attempts: 0, correct: 0, streak: 0 }
-      const s = byTopic[key]
-      s.attempts += 1
-      s.correct += a.correct ? 1 : 0
-      // EMA update: push toward 0 or 1 based on correct and confidence
-      const conf = a.confidence / 3
-      const target = a.correct ? 1 : 0
-      const alpha = 0.08 + 0.10 * clamp01(conf)
-      s.score = (1 - alpha) * s.score + alpha * (target * 100)
+      if (!byTopic[key]) byTopic[key] = { attempts: 0, correct: 0 }
+      byTopic[key].attempts += 1
+      byTopic[key].correct += a.correct ? 1 : 0
     }
-    // Streak calculation (recent)
-    const recent = [...store.attempts].slice(0, 200).reverse()
+    // Streak: walk oldest→newest, reset on a miss
+    const ordered = [...store.attempts].slice(0, 200).reverse()
     const streakBy: Record<string, number> = {}
-    for (const a of recent) {
-      const k = a.topic
-      if (!streakBy[k]) streakBy[k] = 0
-      if (a.correct) streakBy[k] += 1
-      else streakBy[k] = 0
+    for (const a of ordered) {
+      streakBy[a.topic] = a.correct ? (streakBy[a.topic] ?? 0) + 1 : 0
     }
     return Object.entries(byTopic).map(([topic, v]) => ({
       topic: topic as TopicMastery["topic"],
-      score: Math.round(v.score),
+      score: v.attempts > 0 ? Math.round((v.correct / v.attempts) * 100) : 0,
       attempts: v.attempts,
       correct: v.correct,
       streak: streakBy[topic] ?? 0,

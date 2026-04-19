@@ -164,10 +164,117 @@ type Props = {
   ticker: string
   timeframe: ChartTimeframe
   mode: "explain" | "draw"
+  detail?: "line" | "candles"
   onSelect: (range: ChartSelectionRange) => void
+  onLineDrawn?: () => void
   busy?: boolean
   /** Currently loading or null. */
   activeEventId?: string | null
+}
+
+function formatTimeSpan(
+  tf: ChartTimeframe,
+  data: ChartPoint[],
+  a: number,
+  b: number
+): string {
+  const lo = Math.min(a, b)
+  const hi = Math.max(a, b)
+  const diff = hi - lo
+  const ptA = data[lo]
+  const ptB = data[hi]
+  if (ptA?.ts != null && ptB?.ts != null) {
+    const ms = Math.abs(ptB.ts - ptA.ts) * 1000
+    const mins = Math.round(ms / 60000)
+    if (mins < 60) return `${mins} min`
+    const hours = Math.round(mins / 60)
+    if (hours < 48) return `${hours}h`
+    const days = Math.round(hours / 24)
+    if (days < 60) return `${days}d`
+    const months = Math.round(days / 30)
+    if (months < 24) return `${months}mo`
+    return `${(days / 365).toFixed(1)}y`
+  }
+  // Simulated: translate bar count per timeframe.
+  switch (tf) {
+    case "1D":
+      return `${diff * 5} min`
+    case "1W":
+      return diff >= 3 ? `${Math.round(diff / 3)}d` : `${diff} bars`
+    case "1M":
+      return diff >= 3 ? `${Math.round(diff / 3)}d` : `${diff} bars`
+    case "3M":
+      return `${diff}d`
+    case "1Y":
+      return diff >= 4 ? `${Math.round(diff / 4)}mo` : `${diff}wk`
+    case "5Y":
+      return diff >= 12 ? `${Math.round(diff / 12)}y` : `${diff}mo`
+    default:
+      return `${diff} bars`
+  }
+}
+
+function CandlesLayer({
+  data,
+  show,
+}: {
+  data: ChartPoint[]
+  show: boolean
+}) {
+  const area = usePlotArea()
+  const yScale = useYAxisScale(0)
+  const xScale = useXAxisScale(0)
+  if (!show || !area || !yScale || !xScale) return null
+  const n = data.length
+  if (n < 2) return null
+  const step = area.width / n
+  const bodyW = Math.max(1.5, Math.min(12, step * 0.66))
+  return (
+    <g aria-hidden>
+      {data.map((p, i) => {
+        const o = p.open ?? p.price
+        const c = p.close ?? p.price
+        const h = p.high ?? Math.max(o, c)
+        const l = p.low ?? Math.min(o, c)
+        const x = xScale(p.time)
+        const cx = typeof x === "number" ? x : area.x + step * (i + 0.5)
+        if (Number.isNaN(cx)) return null
+        const yH = yScale(h)
+        const yL = yScale(l)
+        const yO = yScale(o)
+        const yC = yScale(c)
+        if ([yH, yL, yO, yC].some((v) => v == null || Number.isNaN(Number(v)))) return null
+        const up = c >= o
+        const color = up ? "#10b981" : "#f43f5e"
+        const top = Math.min(Number(yO), Number(yC))
+        const bottom = Math.max(Number(yO), Number(yC))
+        const bodyH = Math.max(1, bottom - top)
+        return (
+          <g key={`cn-${i}`}>
+            <line
+              x1={cx}
+              x2={cx}
+              y1={Number(yH)}
+              y2={Number(yL)}
+              stroke={color}
+              strokeWidth={1}
+              strokeOpacity={0.9}
+            />
+            <rect
+              x={cx - bodyW / 2}
+              y={top}
+              width={bodyW}
+              height={bodyH}
+              fill={color}
+              fillOpacity={up ? 0.85 : 0.9}
+              stroke={color}
+              strokeWidth={0.6}
+            />
+          </g>
+        )
+      })}
+    </g>
+  )
 }
 
 type DrawLine = { id: string; a: number; b: number }
@@ -182,7 +289,7 @@ function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export default function StockChart({ data, ticker, timeframe, mode, onSelect, busy, activeEventId }: Props) {
+export default function StockChart({ data, ticker, timeframe, mode, detail = "line", onSelect, onLineDrawn, busy, activeEventId }: Props) {
   const plotRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ a: number; b: number } | null>(null)
   const [drag, setDrag] = useState<{ a: number; b: number } | null>(null)
@@ -196,6 +303,27 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
   const onPlotOffset = useCallback((o: ChartOffset) => setPlotOffset(o), [])
 
   const events = useMemo(() => detectChartEvents(data, timeframe, 5), [data, timeframe])
+
+  const xTickIndices = useMemo(() => {
+    const n = data.length
+    if (n === 0) return [] as number[]
+    const targets: Record<ChartTimeframe, number> = {
+      "1D": 6,
+      "1W": 6,
+      "1M": 6,
+      "3M": 6,
+      "1Y": 6,
+      "5Y": 6,
+    }
+    const want = Math.min(targets[timeframe] ?? 6, n)
+    if (want <= 1) return [0]
+    const out: number[] = []
+    for (let i = 0; i < want; i++) {
+      const idx = Math.round((i / (want - 1)) * (n - 1))
+      if (out[out.length - 1] !== idx) out.push(idx)
+    }
+    return out
+  }, [data.length, timeframe])
 
   useEffect(() => {
     setCommitted(null)
@@ -239,12 +367,18 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
       if (drawStart == null) {
         setDrawStart(i)
         setDrawHover(i)
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          /* ignore */
+        }
       } else {
         const a = drawStart
         const b = i
-        setDrawLines((prev) => [...prev, { id: uid(), a, b }].slice(-8))
+        setDrawLines((prev) => [...prev, { id: uid(), a, b }].slice(-12))
         setDrawStart(null)
         setDrawHover(null)
+        onLineDrawn?.()
       }
       return
     }
@@ -300,7 +434,24 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
   }
 
   const onPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (mode === "draw") return
+    if (mode === "draw") {
+      if (drawStart != null && drawHover != null && Math.abs(drawHover - drawStart) >= 1) {
+        const a = drawStart
+        const b = drawHover
+        setDrawLines((prev) => [...prev, { id: uid(), a, b }].slice(-12))
+        setDrawStart(null)
+        setDrawHover(null)
+        onLineDrawn?.()
+        try {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
     if (dragRef.current === null) return
     try {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -406,11 +557,18 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
               <CartesianGrid strokeDasharray="2 8" stroke="rgba(148,163,184,0.09)" vertical={false} />
               <XAxis
                 dataKey="time"
-                interval={data.length > 18 ? 2 : data.length > 12 ? 1 : 0}
-                tick={{ fill: "#64748b", fontSize: 10, fontFamily: "var(--font-geist-mono)" }}
+                ticks={xTickIndices}
+                interval={0}
+                tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "var(--font-geist-mono)" }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: number) => data[v]?.label ?? String(v)}
+                tickMargin={10}
+                tickFormatter={(v: number) => {
+                  const raw = data[v]?.label ?? String(v)
+                  const prevIdx = xTickIndices[xTickIndices.indexOf(v) - 1]
+                  if (prevIdx != null && data[prevIdx]?.label === raw) return ""
+                  return raw
+                }}
               />
               <YAxis
                 domain={[yMin, yMax]}
@@ -435,14 +593,15 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
               <Area
                 type="monotone"
                 dataKey="price"
-                stroke="url(#priceStroke)"
+                stroke={detail === "candles" ? "transparent" : "url(#priceStroke)"}
                 strokeWidth={2.5}
-                fill="url(#priceFill)"
+                fill={detail === "candles" ? "transparent" : "url(#priceFill)"}
                 dot={false}
                 activeDot={false}
-                isAnimationActive
+                isAnimationActive={detail !== "candles"}
                 animationDuration={700}
               />
+              <CandlesLayer data={data} show={detail === "candles"} />
 
               {events.map((ev) => {
                 const p = data[ev.index]
@@ -713,11 +872,73 @@ export default function StockChart({ data, ticker, timeframe, mode, onSelect, bu
           </div>
         ) : null}
       </div>
+      {mode === "draw" && drawLines.length > 0 ? (
+        <div className="rounded-2xl border border-violet-400/20 bg-violet-500/5 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-300">
+              Drawn comparisons
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDrawLines([])
+                setDrawStart(null)
+                setDrawHover(null)
+              }}
+              className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:border-rose-400/40 hover:text-rose-200"
+            >
+              Clear all
+            </button>
+          </div>
+          <ul className="flex flex-col gap-1.5">
+            {drawLines.map((ln) => {
+              const a = data[Math.max(0, Math.min(data.length - 1, ln.a))]!
+              const b = data[Math.max(0, Math.min(data.length - 1, ln.b))]!
+              const dPct = a.price !== 0 ? ((b.price - a.price) / a.price) * 100 : 0
+              const dAbs = b.price - a.price
+              const span = formatTimeSpan(timeframe, data, ln.a, ln.b)
+              const up = dAbs >= 0
+              return (
+                <li
+                  key={ln.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/5 bg-white/[0.03] px-2.5 py-1.5 font-mono text-[11px]"
+                >
+                  <span className="text-slate-400">
+                    {a.label} → {b.label}{" "}
+                    <span className="text-slate-500">· {span}</span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className={up ? "text-emerald-300" : "text-rose-300"}>
+                      {up ? "+" : ""}
+                      {dAbs.toFixed(2)}$
+                    </span>
+                    <span className={up ? "text-emerald-300" : "text-rose-300"}>
+                      {up ? "+" : ""}
+                      {dPct.toFixed(2)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDrawLines((prev) => prev.filter((x) => x.id !== ln.id))
+                      }
+                      className="rounded-full border border-white/10 px-1.5 text-[10px] text-slate-500 hover:border-rose-400/40 hover:text-rose-200"
+                      title="Remove"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ) : null}
+
       <p className="px-1 text-[12px] leading-relaxed text-slate-400">
         {mode === "draw" ? (
           <>
-            <span className="text-violet-300">Click two points</span> to draw a comparison line. The
-            percent label shows the move between them.
+            <span className="text-violet-300">Click two points</span> (or drag between them) to
+            compare. Each line shows % move, $ change, and span.
           </>
         ) : (
           <>

@@ -42,18 +42,28 @@ const TF: Record<ChartTimeframe, TfSpec> = {
 }
 
 function labelFor(tf: ChartTimeframe, i: number): string {
+  const now = new Date()
   switch (tf) {
     case "1D":
       return intradayLabel(i)
     case "1W":
     case "1M":
       return `D${Math.floor(i / 3) + 1}`
-    case "3M":
-      return `D${i + 1}`
-    case "1Y":
-      return `W${i + 1}`
-    case "5Y":
-      return MONTHS[i % 12] ?? `M${i + 1}`
+    case "3M": {
+      const d = new Date(now)
+      d.setDate(d.getDate() - (65 - i))
+      return `${MONTHS[d.getMonth()]} ${d.getDate()}`
+    }
+    case "1Y": {
+      const d = new Date(now)
+      d.setDate(d.getDate() - (51 - i) * 7)
+      return MONTHS[d.getMonth()] ?? `W${i + 1}`
+    }
+    case "5Y": {
+      const d = new Date(now)
+      d.setMonth(d.getMonth() - (59 - i))
+      return `${MONTHS[d.getMonth()]} '${String(d.getFullYear()).slice(-2)}`
+    }
     default:
       return String(i)
   }

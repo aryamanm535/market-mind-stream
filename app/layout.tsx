@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MarketLens — Understand why the market moves",
+  title: "Hoot — Understand why the market moves",
   description:
-    "An AI-powered market learning platform. Explore charts, get real-time explanations for price moves, and learn markets through interactive prediction games.",
+    "Your AI owl tutor for the markets. Explore charts, get real-time explanations for price moves, and learn markets through interactive quizzes.",
 };
 
 export default function RootLayout({

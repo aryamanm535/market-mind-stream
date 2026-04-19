@@ -23,6 +23,7 @@ export default function FlashcardsPanel() {
 
   const activeId = due[idx] ?? null
   const term: LearnTerm | null = activeId ? store.terms[activeId] ?? null : null
+  const totalTerms = Object.keys(store.terms).length
 
   const next = () => {
     setShowDef(false)
@@ -30,62 +31,64 @@ export default function FlashcardsPanel() {
   }
 
   if (!ready) {
-    return (
-      <div className="p-6 font-mono text-sm text-zinc-500">
-        Loading flashcards…
-      </div>
-    )
+    return <div className="p-6 text-sm text-slate-400">Loading flashcards…</div>
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/90 bg-[#06080c] px-5 py-3">
-        <div>
-          <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-            Flashcards
+      <div className="border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Flashcards</h2>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Reveal, self-grade, and the card gets rescheduled by spaced repetition.
+            </p>
           </div>
-          <p className="mt-0.5 font-mono text-[11px] text-zinc-500">
-            Due now: <span className="text-emerald-300/90">{dueTermIds.length}</span> · Total terms:{" "}
-            <span className="text-zinc-300">{Object.keys(store.terms).length}</span>
-          </p>
+          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-[11px]">
+            <span className="text-slate-400">
+              Due <span className="font-mono text-emerald-300">{dueTermIds.length}</span>
+            </span>
+            <span className="h-4 w-px bg-white/10" />
+            <span className="text-slate-400">
+              Total <span className="font-mono text-slate-200">{totalTerms}</span>
+            </span>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto scroll-soft p-6">
         {term ? (
           <div className="mx-auto max-w-2xl">
-            <div className="rounded-lg border border-zinc-800/90 bg-[#0a0d14] p-5">
-              <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="rounded-3xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                     {term.topic}
                   </div>
-                  <div className="mt-2 font-mono text-2xl font-semibold text-zinc-100">
+                  <div className="mt-2 text-3xl font-bold tracking-tight text-white">
                     {term.term}
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowDef((s) => !s)}
-                  className="rounded-md border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 font-mono text-xs text-emerald-200 hover:bg-emerald-500/20"
+                  className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-400/20"
                 >
                   {showDef ? "Hide" : "Reveal"}
                 </button>
               </div>
 
               {showDef ? (
-                <div className="mt-4 space-y-3 border-t border-zinc-800/80 pt-4">
-                  <p className="font-mono text-sm leading-relaxed text-zinc-300">
-                    {term.definition}
-                  </p>
+                <div className="mt-5 space-y-3 border-t border-white/5 pt-4">
+                  <p className="text-[14px] leading-relaxed text-slate-100">{term.definition}</p>
                   {term.example ? (
-                    <p className="rounded-md border border-zinc-800/80 bg-zinc-950/40 p-3 font-mono text-xs text-zinc-400">
-                      <span className="text-zinc-300">Example:</span> {term.example}
+                    <p className="rounded-2xl border border-white/5 bg-black/30 p-3 text-[12px] text-slate-400">
+                      <span className="text-slate-300">Example:</span> {term.example}
                     </p>
                   ) : null}
                 </div>
               ) : (
-                <p className="mt-4 font-mono text-xs text-zinc-500">
+                <p className="mt-5 text-[12px] text-slate-400">
                   Try to recall the definition first, then reveal.
                 </p>
               )}
@@ -108,10 +111,10 @@ export default function FlashcardsPanel() {
                     gradeCard(term.id, x.g)
                     next()
                   }}
-                  className={`rounded-md border px-3 py-2 font-mono text-xs transition-colors disabled:cursor-not-allowed ${
+                  className={`rounded-full border px-3 py-2 text-[12px] font-medium transition-all disabled:cursor-not-allowed ${
                     showDef
-                      ? "border-zinc-700 bg-zinc-900/40 text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-200"
-                      : "border-zinc-800 text-zinc-600"
+                      ? "border-white/10 bg-white/5 text-slate-200 hover:border-emerald-400/40 hover:text-emerald-200"
+                      : "border-white/5 text-slate-600"
                   }`}
                 >
                   {x.label}
@@ -120,12 +123,21 @@ export default function FlashcardsPanel() {
             </div>
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-zinc-800 p-8 text-center font-mono text-sm text-zinc-500">
-            No flashcards due. Generate more terms by selecting a chart range and playing the game.
+          <div className="mx-auto max-w-lg rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400/20 to-violet-400/20 text-2xl">
+              📚
+            </div>
+            <div className="mt-3 text-sm font-semibold text-white">
+              {totalTerms === 0 ? "No flashcards yet" : "All caught up for now"}
+            </div>
+            <div className="mt-1 text-[12px] text-slate-400">
+              {totalTerms === 0
+                ? "Drag a range on the Chart tab to generate terms from AI explanations."
+                : "Come back later — scheduled reviews will show up here."}
+            </div>
           </div>
         )}
       </div>
     </div>
   )
 }
-

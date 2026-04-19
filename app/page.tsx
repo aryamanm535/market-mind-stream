@@ -9,8 +9,13 @@ import LearnGamePanel from "@/components/LearnGamePanel"
 import FlashcardsPanel from "@/components/FlashcardsPanel"
 import MasteryPanel from "@/components/MasteryPanel"
 import LandingView from "@/components/LandingView"
+import CompanionOwl from "@/components/CompanionOwl"
+import FinanceChatbot from "@/components/FinanceChatbot"
+import ProfilePanel from "@/components/ProfilePanel"
+import Owl from "@/components/Owl"
 import { useLocalPortfolio } from "@/hooks/useLocalPortfolio"
 import { useLearningStore } from "@/hooks/useLearningStore"
+import { useGameProfile } from "@/hooks/useGameProfile"
 import { buildSimulatedSeries } from "@/lib/chartSeries"
 import {
   CHART_TIMEFRAMES,
@@ -29,25 +34,30 @@ const EXPLAIN_CLIENT_MS = Math.max(
   Number(process.env.NEXT_PUBLIC_EXPLAIN_CLIENT_TIMEOUT_MS ?? 22_000)
 )
 
-type Tab = "home" | "terminal" | "news" | "learn"
+type Tab = "home" | "terminal" | "news" | "learn" | "you"
 type LearnTab = "game" | "flashcards" | "mastery"
-type GameSection = "driver" | "quiz" | "trade"
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("home")
   const [learnTab, setLearnTab] = useState<LearnTab>("game")
-  const [gameSection, setGameSection] = useState<GameSection>("driver")
-  const [feed, setFeed] = useState<MarketThought[]>([])
+  type FeedItem = MarketThought & { id: string }
+  const [feed, setFeed] = useState<FeedItem[]>([])
+  const [answered, setAnswered] = useState<Set<string>>(new Set())
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [lastPack, setLastPack] = useState<LearnPack | null>(null)
   const [chartSymbol, setChartSymbol] = useState("AAPL")
   const [symbolDraft, setSymbolDraft] = useState("")
   const [chartBusy, setChartBusy] = useState(false)
   const [chartTimeframe, setChartTimeframe] = useState<ChartTimeframe>("1M")
   const [chartMode, setChartMode] = useState<"explain" | "draw">("explain")
-  const [explainMode, setExplainMode] = useState<ExplainMode>("beginner")
+  const [chartDetail, setChartDetail] = useState<"line" | "candles">("line")
+  const [feedCollapsed, setFeedCollapsed] = useState<boolean>(false)
+  const explainMode: ExplainMode = "beginner"
   const [newTicker, setNewTicker] = useState("")
   const portfolio = useLocalPortfolio()
   const learning = useLearningStore()
+  const game = useGameProfile()
+  const [chatOpen, setChatOpen] = useState(false)
 
   const sym = chartSymbol.trim().toUpperCase()
   const [chartData, setChartData] = useState<ChartPoint[]>([])
@@ -98,13 +108,32 @@ export default function Home() {
   }, [sym, chartTimeframe])
 
   useEffect(() => {
-    setFeed([])
-  }, [sym, chartTimeframe])
+    if (!game.ready) return
+    game.recordTicker(sym)
+  }, [sym, game.ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!game.ready) return
+    game.recordTimeframe(chartTimeframe)
+  }, [chartTimeframe, game.ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!game.ready) return
+    if (chartDetail === "candles") game.recordCandles()
+  }, [chartDetail, game.ready]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const explainMove = useCallback(
     async (range: ChartSelectionRange) => {
       if (chartMode !== "explain") return
       setChartBusy(true)
+      const newId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+      // When a new card arrives, collapse every already-answered previous card.
+      setCollapsed((prev) => {
+        const next = new Set(prev)
+        for (const id of answered) next.add(id)
+        next.delete(newId)
+        return next
+      })
       const ac = new AbortController()
       const t = window.setTimeout(() => ac.abort(), EXPLAIN_CLIENT_MS)
       try {
@@ -119,28 +148,31 @@ export default function Home() {
         try {
           data = JSON.parse(text) as MarketThought & { error?: string }
         } catch {
-          const errCard: MarketThought = {
+          const errCard: FeedItem = {
+            id: newId,
             ticker: sym,
             thought: "Server returned non-JSON (check dev server / API route).",
             reasoning: [text.slice(0, 200)],
             confidence: 0,
             action: "ERROR",
           }
-          setFeed((p) => [errCard, ...p].slice(0, 3))
+          setFeed((p) => [errCard, ...p].slice(0, 30))
           return
         }
         if (!res.ok || data.error) {
-          const errCard: MarketThought = {
+          const errCard: FeedItem = {
+            id: newId,
             ticker: sym,
             thought: typeof data.error === "string" ? data.error : "Explain request failed.",
             reasoning: [],
             confidence: 0,
             action: "ERROR",
           }
-          setFeed((p) => [errCard, ...p].slice(0, 3))
+          setFeed((p) => [errCard, ...p].slice(0, 30))
           return
         }
-        setFeed((p) => [data, ...p].slice(0, 3))
+        setFeed((p) => [{ ...data, id: newId } as FeedItem, ...p].slice(0, 30))
+        game.recordExplain()
         if (data.learn) {
           learning.ingestLearnPack(data.learn)
           setLastPack(data.learn)
@@ -152,31 +184,29 @@ export default function Home() {
               ? `Request timed out (${Math.round(EXPLAIN_CLIENT_MS / 1000)}s).`
               : e.message
             : "Network error"
-        const errCard: MarketThought = {
+        const errCard: FeedItem = {
+          id: newId,
           ticker: sym,
           thought: msg,
           reasoning: [],
           confidence: 0,
           action: "ERROR",
         }
-        setFeed((p) => [errCard, ...p].slice(0, 3))
+        setFeed((p) => [errCard, ...p].slice(0, 30))
       } finally {
         clearTimeout(t)
         setChartBusy(false)
       }
     },
-    [chartMode, learning, sym, explainMode]
+    [chartMode, learning, sym, explainMode, answered, game]
   )
 
   const launchLearn = useCallback(
-    (pack: LearnPack, dest: "driver" | "quiz" | "trade" | "flashcards" | "mastery") => {
+    (pack: LearnPack, dest: "quiz" | "flashcards" | "mastery") => {
       setLastPack(pack)
       if (dest === "flashcards") setLearnTab("flashcards")
       else if (dest === "mastery") setLearnTab("mastery")
-      else {
-        setLearnTab("game")
-        setGameSection(dest)
-      }
+      else setLearnTab("game")
       setTab("learn")
     },
     []
@@ -200,7 +230,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <TopNav tab={tab} onTab={setTab} />
+      <TopNav tab={tab} onTab={setTab} game={game} />
 
       <AnimatePresence mode="wait">
         {tab === "home" ? (
@@ -330,36 +360,61 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Beginner / Analyst toggle */}
+                  {/* Chart style: line vs candles */}
                   <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1">
-                    {(["beginner", "analyst"] as const).map((m) => (
+                    {(["line", "candles"] as const).map((d) => (
                       <button
-                        key={m}
+                        key={d}
                         type="button"
-                        onClick={() => setExplainMode(m)}
+                        onClick={() => setChartDetail(d)}
+                        title={
+                          d === "line"
+                            ? "Line view — Simplify toggles smoothing"
+                            : "Candlestick view (uses OHLC when available)"
+                        }
                         className={`rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-all ${
-                          explainMode === m
-                            ? m === "beginner"
-                              ? "bg-emerald-400/20 text-emerald-200"
-                              : "bg-violet-400/20 text-violet-200"
+                          chartDetail === d
+                            ? "bg-white/15 text-white"
                             : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        {m}
+                        {d}
                       </button>
                     ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setChartMode((m) => (m === "explain" ? "draw" : "explain"))}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all ${
-                      chartMode === "explain"
-                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100"
-                        : "border-violet-400/40 bg-violet-400/10 text-violet-100"
-                    }`}
-                  >
-                    {chartMode === "explain" ? "Explain: drag" : "Draw: compare"}
-                  </button>
+
+                  {/* Explain / Draw labeled switch */}
+                  <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-1 py-1">
+                    <span
+                      className={`pl-2 pr-1 text-[11px] font-semibold tracking-wide transition-colors ${
+                        chartMode === "explain" ? "text-emerald-200" : "text-slate-500"
+                      }`}
+                    >
+                      Explain
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={chartMode === "draw"}
+                      onClick={() => setChartMode((m) => (m === "explain" ? "draw" : "explain"))}
+                      className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
+                        chartMode === "draw" ? "bg-violet-500/70" : "bg-emerald-500/60"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-lg transition-transform ${
+                          chartMode === "draw" ? "translate-x-5" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                    <span
+                      className={`pl-1 pr-2 text-[11px] font-semibold tracking-wide transition-colors ${
+                        chartMode === "draw" ? "text-violet-200" : "text-slate-500"
+                      }`}
+                    >
+                      Draw
+                    </span>
+                  </div>
                 </div>
               </header>
 
@@ -374,34 +429,97 @@ export default function Home() {
                   ticker={sym}
                   timeframe={chartTimeframe}
                   mode={chartMode}
+                  detail={chartDetail}
                   onSelect={explainMove}
+                  onLineDrawn={game.recordDraw}
                   busy={chartBusy}
                 />
               </div>
             </main>
 
-            <section className="flex w-[min(420px,38vw)] shrink-0 flex-col border-l border-white/5 bg-black/20 backdrop-blur-xl">
-              <div className="border-b border-white/5 p-5">
-                <h2 className="text-sm font-semibold text-white">AI Explanations</h2>
-                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-                  Drag across the chart — each card explains the move using recent news.
-                </p>
-              </div>
-              <div className="flex-1 overflow-y-auto scroll-soft p-4">
-                {feed.length === 0 ? (
-                  <EmptyFeed />
-                ) : (
-                  feed.map((item, i) => (
-                    <AiThoughtCard
-                      key={`${i}-${item.ticker}-${item.confidence}-${item.action}-${item.thought.length}`}
-                      item={item}
-                      i={i}
-                      onLaunchLearn={launchLearn}
-                    />
-                  ))
-                )}
-              </div>
-            </section>
+            {feedCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setFeedCollapsed(false)}
+                className="flex w-8 shrink-0 flex-col items-center justify-center gap-2 border-l border-white/5 bg-black/30 px-1 text-[10px] font-semibold uppercase tracking-widest text-slate-300 backdrop-blur-xl hover:bg-black/40"
+                title="Show AI explanation history"
+              >
+                <span className="[writing-mode:vertical-rl] rotate-180">
+                  AI History {feed.length > 0 ? `· ${feed.length}` : ""}
+                </span>
+              </button>
+            ) : (
+              <section className="flex w-[min(420px,38vw)] shrink-0 flex-col border-l border-white/5 bg-black/20 backdrop-blur-xl">
+                <div className="flex items-start justify-between gap-2 border-b border-white/5 p-5">
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">
+                      AI Explanations
+                      {feed.length > 0 ? (
+                        <span className="ml-2 rounded-full bg-emerald-400/15 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
+                          {feed.length}
+                        </span>
+                      ) : null}
+                    </h2>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                      History preserved — collapse when you need the chart space.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setFeedCollapsed(true)}
+                      className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-medium text-slate-300 hover:border-emerald-400/40 hover:text-emerald-200"
+                      title="Collapse panel"
+                    >
+                      Collapse →
+                    </button>
+                    {feed.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFeed([])
+                          setAnswered(new Set())
+                          setCollapsed(new Set())
+                        }}
+                        className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-medium text-slate-400 hover:border-rose-400/40 hover:text-rose-200"
+                      >
+                        Clear history
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto scroll-soft p-4">
+                  {feed.length === 0 ? (
+                    <EmptyFeed />
+                  ) : (
+                    feed.map((item, i) => (
+                      <AiThoughtCard
+                        key={item.id}
+                        item={item}
+                        i={i}
+                        onLaunchLearn={launchLearn}
+                        answered={answered.has(item.id)}
+                        collapsed={collapsed.has(item.id)}
+                        onAnswered={() =>
+                          setAnswered((s) => new Set(s).add(item.id))
+                        }
+                        onToggleCollapse={() =>
+                          setCollapsed((s) => {
+                            const n = new Set(s)
+                            if (n.has(item.id)) n.delete(item.id)
+                            else n.add(item.id)
+                            return n
+                          })
+                        }
+                        onDelete={() =>
+                          setFeed((f) => f.filter((x) => x.id !== item.id))
+                        }
+                      />
+                    ))
+                  )}
+                </div>
+              </section>
+            )}
           </motion.div>
         ) : tab === "learn" ? (
           <motion.div
@@ -461,8 +579,11 @@ export default function Home() {
                   {lastPack ? (
                     <LearnGamePanel
                       pack={lastPack}
-                      onAttempt={learning.recordAttempt}
-                      initialSection={gameSection}
+                      onAttempt={(a) => {
+                        learning.recordAttempt(a)
+                        game.recordQuiz(a.correct, a.topic)
+                      }}
+                      history={learning.store.attempts}
                     />
                   ) : (
                     <div className="rounded-3xl border border-dashed border-white/10 p-10 text-center text-sm text-slate-400">
@@ -476,6 +597,17 @@ export default function Home() {
                 <MasteryPanel />
               )}
             </main>
+          </motion.div>
+        ) : tab === "you" ? (
+          <motion.div
+            key="you"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex min-h-0 flex-1"
+          >
+            <ProfilePanel profile={game} />
           </motion.div>
         ) : (
           <motion.div
@@ -535,17 +667,30 @@ export default function Home() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <CompanionOwl profile={game} onOpenChat={() => setChatOpen(true)} />
+      <FinanceChatbot open={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   )
 }
 
-function TopNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+function TopNav({
+  tab,
+  onTab,
+  game,
+}: {
+  tab: Tab
+  onTab: (t: Tab) => void
+  game: ReturnType<typeof useGameProfile>
+}) {
   const items: { id: Tab; label: string; color: string }[] = [
     { id: "home", label: "Home", color: "emerald" },
     { id: "terminal", label: "Chart", color: "emerald" },
     { id: "news", label: "Portfolio", color: "violet" },
     { id: "learn", label: "Learn", color: "amber" },
+    { id: "you", label: "You", color: "emerald" },
   ]
+  const { rank, profile: gp } = game
   return (
     <header className="sticky top-0 z-40 flex shrink-0 flex-wrap items-center gap-3 border-b border-white/5 bg-black/40 px-6 py-3 backdrop-blur-xl">
       <button
@@ -553,11 +698,11 @@ function TopNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
         onClick={() => onTab("home")}
         className="flex items-center gap-2"
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg brand-gradient-bg font-bold text-white">
-          M
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-400/30 bg-emerald-400/10">
+          <Owl pose="idle" size={24} />
         </div>
-        <div className="text-sm font-semibold tracking-tight text-white">
-          Market<span className="brand-gradient-text">Lens</span>
+        <div className="text-base font-semibold tracking-tight text-white">
+          <span className="brand-gradient-text">Hoot</span>
         </div>
       </button>
       <nav className="ml-6 flex gap-1">
@@ -581,6 +726,38 @@ function TopNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
           </button>
         ))}
       </nav>
+      <button
+        type="button"
+        onClick={() => onTab("you")}
+        title={`${rank.rank.label} · ${gp.xp} XP`}
+        className="ml-auto flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 transition-colors hover:bg-white/10"
+      >
+        <span
+          className="flex h-7 w-7 items-center justify-center rounded-full border"
+          style={{ borderColor: `${rank.rank.accent}66`, background: `${rank.rank.accent}15` }}
+        >
+          <Owl pose="idle" size={22} />
+        </span>
+        <span className="flex flex-col items-start gap-0.5 pr-1">
+          <span
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: rank.rank.accent }}
+          >
+            {rank.rank.label}
+          </span>
+          <span className="h-1 w-20 overflow-hidden rounded-full bg-white/10">
+            <span
+              className="block h-full rounded-full transition-all"
+              style={{
+                width: `${rank.pct}%`,
+                background: `linear-gradient(90deg, ${rank.rank.accent}, ${
+                  rank.next?.accent ?? rank.rank.accent
+                })`,
+              }}
+            />
+          </span>
+        </span>
+      </button>
     </header>
   )
 }

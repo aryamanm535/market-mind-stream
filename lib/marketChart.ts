@@ -30,9 +30,9 @@ function formatAxisLabel(tsSec: number, tf: ChartTimeframe): string {
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
   }
   if (tf === "1Y") {
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" })
+    return d.toLocaleDateString(undefined, { month: "short" })
   }
-  return d.toLocaleDateString(undefined, { month: "short", year: "numeric" })
+  return d.toLocaleDateString(undefined, { month: "short", year: "2-digit" })
 }
 
 function toChartPoints(timestamps: number[], prices: Array<number | null>, tf: ChartTimeframe): ChartPoint[] {
@@ -211,6 +211,41 @@ async function fetchTwelveDataSeries(
   return toChartPoints(ts, closes, timeframe)
 }
 
+/**
+ * Downsample a dense series to roughly `target` points using uniform bucketing
+ * (keeps first + last, averages within each bucket). Re-indexes `time`.
+ */
+function downsample(points: ChartPoint[], target: number): ChartPoint[] {
+  if (points.length <= target) return points
+  const step = points.length / target
+  const out: ChartPoint[] = []
+  for (let i = 0; i < target; i++) {
+    const lo = Math.floor(i * step)
+    const hi = Math.min(points.length, Math.floor((i + 1) * step))
+    if (hi <= lo) continue
+    const slice = points.slice(lo, hi)
+    const pivot = slice[Math.floor(slice.length / 2)]!
+    let sum = 0
+    let h = -Infinity
+    let l = Infinity
+    for (const p of slice) {
+      sum += p.price
+      if (p.high != null && p.high > h) h = p.high
+      if (p.low != null && p.low < l) l = p.low
+    }
+    out.push({
+      ...pivot,
+      time: out.length,
+      price: Math.round((sum / slice.length) * 100) / 100,
+      open: slice[0]!.open,
+      close: slice[slice.length - 1]!.close,
+      high: Number.isFinite(h) ? h : pivot.high,
+      low: Number.isFinite(l) ? l : pivot.low,
+    })
+  }
+  return out
+}
+
 export type ChartFetchSource = "yahoo" | "finnhub" | "twelvedata"
 
 export async function fetchMarketChartSeries(
@@ -222,9 +257,13 @@ export async function fetchMarketChartSeries(
     throw new Error("Invalid symbol")
   }
 
+  const targetCount: Partial<Record<ChartTimeframe, number>> = { "1D": 78, "1W": 80 }
+  const smooth = (pts: ChartPoint[]) =>
+    targetCount[timeframe] ? downsample(pts, targetCount[timeframe]!) : pts
+
   try {
     const points = await fetchYahooFinance2Series(sym, timeframe)
-    if (points.length > 0) return { points, source: "yahoo" }
+    if (points.length > 0) return { points: smooth(points), source: "yahoo" }
   } catch {
     /* fall through */
   }
@@ -233,7 +272,7 @@ export async function fetchMarketChartSeries(
   if (finnhubKey) {
     try {
       const points = await fetchFinnhubSeries(sym, timeframe, finnhubKey)
-      if (points.length > 0) return { points, source: "finnhub" }
+      if (points.length > 0) return { points: smooth(points), source: "finnhub" }
     } catch {
       /* try next */
     }
@@ -243,7 +282,7 @@ export async function fetchMarketChartSeries(
   if (twelveKey) {
     try {
       const points = await fetchTwelveDataSeries(sym, timeframe, twelveKey)
-      if (points.length > 0) return { points, source: "twelvedata" }
+      if (points.length > 0) return { points: smooth(points), source: "twelvedata" }
     } catch {
       /* try next */
     }

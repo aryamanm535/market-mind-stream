@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { clsx } from "clsx"
 import type { LearnPack, MarketThought } from "@/lib/types"
@@ -38,14 +37,24 @@ export default function AiThoughtCard({
   item,
   i,
   onLaunchLearn,
+  answered = false,
+  collapsed = false,
+  onAnswered,
+  onToggleCollapse,
+  onDelete,
 }: {
   item: MarketThought
   i: number
-  onLaunchLearn?: (pack: LearnPack, dest: "driver" | "quiz" | "trade" | "flashcards" | "mastery") => void
+  onLaunchLearn?: (pack: LearnPack, dest: "quiz" | "flashcards" | "mastery") => void
+  answered?: boolean
+  collapsed?: boolean
+  onAnswered?: () => void
+  onToggleCollapse?: () => void
+  onDelete?: () => void
 }) {
   const action = (item.action in actionStyles ? item.action : "WATCH") as keyof typeof actionStyles
   const style = actionStyles[action]
-  const [predicted, setPredicted] = useState(false)
+  const predicted = answered
   const direction =
     item.thought.toLowerCase().includes("gain") ||
     item.thought.toLowerCase().includes("rally") ||
@@ -93,17 +102,38 @@ export default function AiThoughtCard({
           >
             {action}
           </span>
-          <div className="flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
-            <div className="h-1.5 w-8 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full bg-gradient-to-r from-emerald-400 to-violet-400"
-                style={{ width: `${item.confidence}%` }}
-              />
-            </div>
-            <span className="font-mono text-[11px] text-slate-300">{item.confidence}%</span>
-          </div>
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              title={collapsed ? "Expand" : "Collapse"}
+              className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-300 hover:border-emerald-400/40 hover:text-emerald-200"
+            >
+              {collapsed ? "▸" : "▾"}
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              title="Delete card"
+              className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400 hover:border-rose-400/40 hover:text-rose-300"
+            >
+              ✕
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {collapsed && (predicted || action === "ERROR") ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="mt-2 w-full rounded-2xl border border-white/5 bg-black/20 px-3 py-2 text-left text-[12px] leading-snug text-slate-300 hover:border-white/10 hover:text-slate-100"
+        >
+          <span className="line-clamp-2">{item.thought}</span>
+        </button>
+      ) : null}
 
       {/* Prediction quiz */}
       {action !== "ERROR" && !predicted && predictionChoices.length >= 2 ? (
@@ -111,12 +141,12 @@ export default function AiThoughtCard({
           direction={direction}
           choices={predictionChoices.slice(0, 4)}
           correct={correct}
-          onDone={() => setPredicted(true)}
+          onDone={() => onAnswered?.()}
         />
       ) : null}
 
       <AnimatePresence initial={false}>
-        {(predicted || action === "ERROR") && (
+        {(predicted || action === "ERROR") && !collapsed && (
           <motion.div
             key="body"
             initial={{ opacity: 0, y: 6 }}
@@ -169,9 +199,7 @@ export default function AiThoughtCard({
               <div className="mt-3 flex flex-wrap gap-1.5 border-t border-white/5 pt-3">
                 {(
                   [
-                    { id: "driver" as const, label: "Driver game" },
                     { id: "quiz" as const, label: "Quiz" },
-                    { id: "trade" as const, label: "Paper trade" },
                     { id: "flashcards" as const, label: "Flashcards" },
                     { id: "mastery" as const, label: "Mastery" },
                   ] as const
